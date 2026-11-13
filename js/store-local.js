@@ -1,10 +1,9 @@
-// On-device store (IndexedDB). Used until Firebase is configured, and handy
-// for demos — everything stays in this one browser.
+// Data store for the single dock computer (IndexedDB in this browser).
 import { db, uid } from './db.js';
+import { MASTER_PIN } from './config.js';
 import { hashPassword } from './util.js';
 import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, totals, renumber, demoLists, DEMO_PEOPLE, DEMO_PASSWORD, dayKey, listCode } from './common.js';
 
-export const mode = 'local';
 const SESSION_KEY = 'yk.session';
 
 export async function init() {}
@@ -201,4 +200,42 @@ export async function seedDemo(admin) {
     await db.put('dispatches', { ...rest, id: uid('d'), code: listCode(l.createdAt, 900 + counts[k]), createdBy: user.id, empName: user.name, empNo: user.empNo });
   }
   await log(admin, 'demo.seed');
+}
+
+// ---------- master PIN ----------
+// Resets any password from the sign-in screen. The default comes from
+// config.js; once changed in Settings, the new one lives on this computer.
+const PIN_LOCK = 'yk.pinlock';
+async function pinRecord() {
+  return (await db.get('settings', 'master')) || MASTER_PIN;
+}
+async function checkPin(pin) {
+  const lock = JSON.parse(localStorage.getItem(PIN_LOCK) || '{"n":0,"until":0}');
+  if (Date.now() < lock.until) throw new Error(`Master PIN is locked. Try again in ${Math.ceil((lock.until - Date.now()) / 60000)} min.`);
+  const rec = await pinRecord();
+  const ok = (await hashPassword(String(pin).replace(/\D/g, ''), rec.salt, rec.iterations)).hash === rec.hash;
+  if (!ok) {
+    lock.n++; if (lock.n >= 5) { lock.until = Date.now() + 10 * 60000; lock.n = 0; }
+    localStorage.setItem(PIN_LOCK, JSON.stringify(lock));
+    throw new Error('Master PIN is incorrect.');
+  }
+  localStorage.removeItem(PIN_LOCK);
+}
+
+export async function masterReset(login, pin, password) {
+  const u = await findUser(login);
+  await checkPin(pin);
+  if (!u) throw new Error('No account with that username or employee no.');
+  Object.assign(u, await hashPassword(password), { mustChangePassword: false, active: true, updatedAt: Date.now(), updatedBy: 'Master PIN' });
+  await db.put('users', u);
+  await log({ id: u.id, name: 'Master PIN' }, 'user.reset', `${u.name} (${u.empNo})`);
+  return u;
+}
+
+export async function changeMasterPin(current, next, actor) {
+  await checkPin(current);
+  const iterations = 310000;
+  const { salt, hash } = await hashPassword(String(next).replace(/\D/g, ''), null, iterations);
+  await db.put('settings', { id: 'master', salt, hash, iterations, changedAt: Date.now(), changedBy: actor.name });
+  await log(actor, 'settings.update', 'master PIN');
 }
