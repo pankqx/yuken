@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Yuken · Proof of Loading</title>
+  <title>Yuken India Limited · Proof of Loading</title>
   <meta name="description" content="Scan master-box labels into vehicle loading lists — Yuken India FG dispatch.">
-  <meta name="theme-color" content="#1D232B">
+  <meta name="theme-color" content="#070F1D">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/yuken-logo.svg" as="image">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -15,6 +16,20 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+  <div id="boot" aria-hidden="true"><pre id="bootart"></pre></div>
+  <script>
+    // ASCII boot: a barcode being read while the app loads.
+    (function () {
+      var el = document.getElementById('bootart'), n = 0, bars = '▌▐▌▌▐▐▌▐▌▌▐▌▐▐▌▌▐▌▐▐▌';
+      function tick() {
+        var w = 22, p = n % (w + 6), line = '';
+        for (var i = 0; i < w; i++) line += i === p ? '█' : bars[i];
+        el.textContent = '  Y U K E N   I N D I A\n\n  ' + line + '\n  ' + ' '.repeat(Math.min(p, w)) + '^\n\n  reading label ' + '.'.repeat(n % 4);
+        n++;
+      }
+      tick(); window.__boot = setInterval(tick, 70);
+    })();
+  </script>
   <div id="app"></div>
   <div id="print-root"></div>
   <noscript>Turn on JavaScript to use the loading app.</noscript>

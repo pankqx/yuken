@@ -40,8 +40,8 @@ const P = {
 
 export const icon = (n, cls = '') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n] || ''}</svg>`;
 
-export const brand = (sub = 'Proof of loading') => `
-  <div class="brand"><div class="brand-mark">${icon('hyd')}</div><div><b>YUKEN</b><span>${esc(sub)}</span></div></div>`;
+export const brand = (lg = false) => `
+  <div class="brand${lg ? ' lg' : ''}"><img src="assets/yuken-logo.svg" alt="Yuken"><div class="ltd">India Limited<i></i></div></div>`;
 
 // ---------- toast ----------
 export function toast(msg, kind = 'ok', ms = 2600) {
@@ -91,6 +91,35 @@ export function confirmBox({ title, text, ok = 'Confirm', danger = false, input 
     document.addEventListener('keydown', key);
     el.querySelector('[data-c]').onclick = () => done(false);
     el.querySelector('[data-o]').onclick = () => done(inp ? inp.value : true);
+    scrim.onclick = () => done(false);
+  });
+}
+
+// ---------- form dialog ----------
+// Resolves with the form values when onSubmit returns true, or false on cancel.
+export function formDialog({ title, text = '', body, ok = 'Save', onSubmit }) {
+  return new Promise(resolve => {
+    const scrim = document.createElement('div'); scrim.className = 'scrim top';
+    const el = document.createElement('div'); el.className = 'dialog'; el.setAttribute('role', 'dialog');
+    el.innerHTML = `<h2>${esc(title)}</h2>${text ? `<p>${text}</p>` : ''}<form novalidate>${body}<div class="form-err" hidden></div></form>
+      <div class="row"><button class="btn ghost" data-c>Cancel</button><button class="btn primary" data-o>${esc(ok)}</button></div>`;
+    document.body.append(scrim, el);
+    const form = el.querySelector('form');
+    setTimeout(() => form.querySelector('input')?.focus(), 50);
+    const done = v => { el.remove(); scrim.remove(); document.removeEventListener('keydown', key); resolve(v); };
+    const submit = async () => {
+      const btn = el.querySelector('[data-o]'); btn.classList.add('busy');
+      const err = form.querySelector('.form-err'); err.hidden = true;
+      try { const r = await onSubmit(Object.fromEntries(new FormData(form).entries()), form); if (r) return done(r); }
+      catch (e) { err.textContent = e.message; err.hidden = false; }
+      btn.classList.remove('busy');
+    };
+    const key = e => { if (e.key === 'Escape') done(false); };
+    document.addEventListener('keydown', key);
+    form.onsubmit = e => { e.preventDefault(); submit(); };
+    form.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    el.querySelector('[data-c]').onclick = () => done(false);
+    el.querySelector('[data-o]').onclick = submit;
     scrim.onclick = () => done(false);
   });
 }
