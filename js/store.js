@@ -1,5 +1,3 @@
-// Picks the data store: Firebase when configured, otherwise this device.
-import { firebaseConfig } from './config.js';
-
-export const S = firebaseConfig ? await import('./store-firebase.js') : await import('./store-local.js');
-await S.init();
+// One computer at the dock runs the app; everything is kept in this browser.
+import * as S from './store-local.js';
+export { S };

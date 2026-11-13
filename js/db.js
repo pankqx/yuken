@@ -1,5 +1,5 @@
 // Storage layer. Everything goes through this module so the backend can be
-// swapped (IndexedDB today, Firebase/Supabase later) without touching the UI.
+// swapped later without touching the UI.
 
 const DB_NAME = 'yuken-pol';
 const DB_VERSION = 1;

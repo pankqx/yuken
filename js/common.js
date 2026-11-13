@@ -1,4 +1,4 @@
-// Pieces shared by the on-device store and the Firebase store.
+// Pieces shared across the data store: duplicate rules, totals, demo data.
 
 export const DEFAULT_SETTINGS = {
   id: 'app',
@@ -49,7 +49,9 @@ export async function demoLists(people, settings) {
   for (let day = 4; day >= 0; day--) {
     for (let k = 0; k < 2; k++) {
       const u = people[(day + k) % people.length];
-      const t = Date.now() - day * 86400000 - (k ? 3 : 7) * 3600000;
+      // spread lists across the working day: 10:15 and 15:30, never in the future
+      const d0 = new Date(Date.now() - day * 86400000); d0.setHours(k ? 15 : 10, k ? 30 : 15, 0, 0);
+      const t = Math.min(d0.getTime(), Date.now() - (k ? 40 : 130) * 60000);
       const count = 6 + ((day * 3 + k * 5) % 9);
       const boxes = [];
       for (let i = 0; i < count; i++) boxes.push({ ...parseScan(sampleLabel(n++)), seq: i + 1, scannedAt: t + i * 45000, by: u.name, empNo: u.empNo, via: i % 3 ? 'scanner' : 'camera' });
