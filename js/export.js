@@ -66,32 +66,55 @@ export function reportExcel(lists, settings, label = 'report') {
 }
 
 // ---------- PDF ----------
-export function toPDF(d, settings) {
+let logoCache;
+async function logoPNG() {
+  if (logoCache) return logoCache;
+  const img = new Image();
+  img.src = 'assets/yuken-logo-white.svg';
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = 852; c.height = 232;
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return (logoCache = c.toDataURL('image/png'));
+}
+
+export async function toPDF(d, settings) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const W = 210, M = 14;
-  const blue = [23, 71, 166], ink = [27, 31, 36], mute = [110, 118, 130];
+  const W = 210, M = 12;
+  const blue = [4, 159, 224], navy = [11, 33, 64], ink = [19, 32, 47], mute = [60, 108, 140], tint = [234, 246, 253];
 
-  doc.setFillColor(...blue); doc.rect(0, 0, W, 4, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...blue);
-  doc.text('YUKEN', M, 16);
-  doc.setTextColor(...ink); doc.setFontSize(12);
-  doc.text(settings.company, W / 2, 14, { align: 'center' });
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...mute);
-  doc.text(settings.docTitle + (settings.plant ? '  ·  ' + settings.plant : ''), W / 2, 19.5, { align: 'center' });
-  doc.setFont('courier', 'bold'); doc.setFontSize(10); doc.setTextColor(...ink);
-  doc.text(d.code, W - M, 16, { align: 'right' });
+  // header band
+  doc.setFillColor(...navy); doc.rect(0, 0, W, 34, 'F');
+  doc.setFillColor(15, 55, 101); doc.triangle(120, 0, W, 0, W, 34, 'F');
+  doc.setFillColor(...blue); doc.rect(0, 34, W, 1.2, 'F');
+  try { doc.addImage(await logoPNG(), 'PNG', M, 9, 33, 9); } catch { /* logo optional */ }
+  doc.setTextColor(191, 230, 250); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+  doc.text('INDIA LIMITED', M, 23);
+  doc.setTextColor(255); doc.setFontSize(14);
+  doc.text(settings.docTitle, 56, 15);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(191, 230, 250);
+  doc.text(settings.company + (settings.plant ? '  |  ' + settings.plant : ''), 56, 21);
+  doc.setFont('courier', 'bold'); doc.setFontSize(10.5); doc.setTextColor(255);
+  doc.text(d.code, W - M, 15, { align: 'right' });
+  const closed = d.status === 'closed';
+  doc.setFillColor(...(closed ? [55, 214, 155] : [255, 181, 71]));
+  doc.roundedRect(W - M - 24, 19, 24, 6, 3, 3, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...(closed ? [5, 38, 26] : [58, 36, 0]));
+  doc.text(closed ? 'CLOSED' : 'LOADING', W - M - 12, 23.2, { align: 'center' });
 
-  const rows = [
-    ['Employee', `${d.empName} (${d.empNo})`, 'Login time', fmt.dt(d.loginAt)],
-    ['Vehicle no.', prettyVehicle(d.vehicleNo), 'Transport', d.transport],
-    ['Serial key', d.serialKey, 'Location', d.location],
-    ['Driver', [d.driverName, d.driverPhone].filter(Boolean).join(', ') || '—', 'Status', d.status === 'closed' ? `Closed ${fmt.dt(d.closedAt)}` : 'Open']
+  // details cards
+  const meta = [
+    ['Employee', `${d.empName} (${d.empNo})`], ['Login time', fmt.dt(d.loginAt)], ['Vehicle no.', prettyVehicle(d.vehicleNo)], ['Transport', d.transport],
+    ['Serial key', d.serialKey], ['Location', d.location], ['Driver', [d.driverName, d.driverPhone].filter(Boolean).join(', ') || '-'], ['Closed', closed ? fmt.dt(d.closedAt) : 'Open']
   ];
-  doc.autoTable({
-    startY: 25, body: rows, theme: 'grid', margin: { left: M, right: M },
-    styles: { fontSize: 9, cellPadding: 2.2, lineColor: [210, 214, 220], textColor: ink },
-    columnStyles: { 0: { textColor: mute, cellWidth: 26 }, 2: { textColor: mute, cellWidth: 26 }, 1: { fontStyle: 'bold' }, 3: { fontStyle: 'bold' } }
+  const cw = (W - 2 * M - 3 * 2.5) / 4;
+  meta.forEach(([k, v], i) => {
+    const x = M + (i % 4) * (cw + 2.5), y = 41 + Math.floor(i / 4) * 15;
+    doc.setFillColor(...tint); doc.roundedRect(x, y, cw, 12.5, 1.5, 1.5, 'F');
+    doc.setFillColor(...blue); doc.rect(x, y, 1, 12.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...mute); doc.text(k, x + 3.5, y + 4.5);
+    doc.setFontSize(9); doc.setTextColor(...ink); doc.text(doc.splitTextToSize(String(v || '-'), cw - 5)[0], x + 3.5, y + 9.5);
   });
 
   const hasDetail = d.boxes.some(b => b.item || b.weight != null);
@@ -99,48 +122,50 @@ export function toPDF(d, settings) {
     ? [b.seq, b.boxNo || '', b.item || '', b.qty ?? '', b.weight ?? '', b.uid || '', fmt.time(b.scannedAt)]
     : [b.seq, b.boxNo || b.raw, fmt.time(b.scannedAt)]);
   doc.autoTable({
-    startY: doc.lastAutoTable.finalY + 5, margin: { left: M, right: M },
+    startY: 75, margin: { left: M, right: M },
     head: [hasDetail ? ['#', 'Box no.', 'Item', 'Qty', 'Kg', 'Unique ID', 'Time'] : ['#', 'Box no.', 'Time']],
     body: body.length ? body : [[{ content: 'No boxes scanned', colSpan: hasDetail ? 7 : 3, styles: { halign: 'center', textColor: mute } }]],
-    theme: 'striped', styles: { fontSize: 8.5, cellPadding: 1.8, textColor: ink },
-    headStyles: { fillColor: blue, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [244, 246, 249] },
-    columnStyles: { 0: { cellWidth: 9, halign: 'right' }, 1: { font: 'courier', fontStyle: 'bold' } }
+    theme: 'plain', styles: { fontSize: 8.5, cellPadding: 2, textColor: ink, lineColor: [220, 232, 241], lineWidth: { bottom: 0.2 } },
+    headStyles: { fillColor: navy, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 250, 254] },
+    columnStyles: { 0: { cellWidth: 10, halign: 'center', textColor: blue, fontStyle: 'bold' }, 1: { font: 'courier', fontStyle: 'bold' } }
   });
 
   let y = doc.lastAutoTable.finalY + 8;
-  if (y > 230) { doc.addPage(); y = 20; }
-  doc.setDrawColor(...blue); doc.setLineWidth(0.4);
-  doc.roundedRect(M, y, 85, 18, 2, 2);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mute);
-  doc.text('Total boxes', M + 4, y + 6); doc.text('Total weight', M + 46, y + 6);
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...ink);
-  doc.text(String(d.boxes.length), M + 4, y + 14); doc.text(fmt.kg(d.totalWeight), M + 46, y + 14);
-
+  if (y > 232) { doc.addPage(); y = 20; }
+  const tot = (x, label, val) => {
+    doc.setFillColor(...navy); doc.roundedRect(x, y, 56, 22, 2.5, 2.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(169, 216, 242); doc.text(label, x + 5, y + 7);
+    doc.setFontSize(19); doc.setTextColor(255); doc.text(val, x + 5, y + 17);
+  };
+  tot(M, 'Total boxes', String(d.boxes.length));
+  tot(M + 60, 'Total weight', fmt.kg(d.totalWeight));
   if (d.driverPhoto) {
-    try { doc.addImage(d.driverPhoto, 'JPEG', W - M - 42, y, 42, 32); } catch { /* bad image */ }
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...mute);
-    doc.text('Driver photo', W - M - 42, y + 36);
+    try { doc.addImage(d.driverPhoto, 'JPEG', W - M - 46, y, 46, 32); } catch { /* bad image */ }
+    doc.setFontSize(7.5); doc.setTextColor(...mute); doc.text('Driver photo', W - M - 46, y + 36);
   }
-  const sy = Math.max(y + 48, y + 30);
-  doc.setDrawColor(180); doc.setLineWidth(0.2);
-  [['Loaded by', M], ['Driver', M + 62], ['Security', M + 124]].forEach(([t, x]) => {
-    doc.line(x, sy, x + 52, sy); doc.setFontSize(8); doc.setTextColor(...mute); doc.text(t, x, sy + 4);
+  const sy = y + 50;
+  [['Loaded by', M], ['Driver', M + 64], ['Security', M + 128]].forEach(([t, x]) => {
+    doc.setDrawColor(...navy); doc.setLineWidth(0.4); doc.line(x, sy, x + 54, sy);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...mute); doc.text(t, x, sy + 4.5);
   });
 
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
-    doc.setPage(i); doc.setFontSize(7); doc.setTextColor(...mute);
-    doc.text(`Generated ${fmt.dt(Date.now())}  ·  Page ${i} of ${pages}`, W / 2, 290, { align: 'center' });
+    doc.setPage(i);
+    doc.setFillColor(...blue); doc.rect(0, 293, W, 4, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...mute);
+    doc.text(`${settings.company}  |  Generated ${fmt.dt(Date.now())}`, M, 290);
+    doc.text(`Page ${i} of ${pages}`, W - M, 290, { align: 'right' });
   }
   return doc.output('blob');
 }
 
-export function downloadPDF(d, s) { download(toPDF(d, s), fileBase(d) + '.pdf'); }
+export async function downloadPDF(d, s) { download(await toPDF(d, s), fileBase(d) + '.pdf'); }
 
 // ---------- Share ----------
 export async function share(d, s, kind = 'pdf') {
-  const blob = kind === 'xlsx' ? toExcel(d, s) : toPDF(d, s);
+  const blob = kind === 'xlsx' ? toExcel(d, s) : await toPDF(d, s);
   const file = new File([blob], fileBase(d) + (kind === 'xlsx' ? '.xlsx' : '.pdf'), { type: blob.type || 'application/pdf' });
   const text = `${s.company} — ${s.docTitle}\n${d.code}\nVehicle ${prettyVehicle(d.vehicleNo)} · ${d.transport}\n${d.boxes.length} boxes · ${fmt.kg(d.totalWeight)}\nBy ${d.empName} (${d.empNo}), ${fmt.dt(d.closedAt || d.createdAt)}`;
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -153,38 +178,45 @@ export async function share(d, s, kind = 'pdf') {
   return 'fallback';
 }
 
-// ---------- Print ----------
+// ---------- POL sheet (preview + print) ----------
+export function sheetHTML(d, s) {
+  const cols = 6, min = 60;
+  const n = Math.max(min, Math.ceil(d.boxes.length / cols) * cols);
+  const cells = Array.from({ length: n }, (_, i) => d.boxes[i]);
+  const closed = d.status === 'closed';
+  return `<div class="ps">
+    <header class="ps-band">
+      <div class="lock"><img src="assets/yuken-logo-white.svg" alt="Yuken"><span>INDIA LIMITED</span></div>
+      <div class="ttl"><b>${esc(s.docTitle)}</b><span>${esc(s.company)}${s.plant ? ' &nbsp;|&nbsp; ' + esc(s.plant) : ''}</span></div>
+      <div class="cd"><b>${esc(d.code)}</b><span class="${closed ? '' : 'open'}">${closed ? 'Closed' : 'Loading'}</span></div>
+    </header>
+    <div class="ps-body">
+      <div class="ps-meta">
+        <div><span>Employee</span><b>${esc(d.empName)}</b></div>
+        <div><span>Employee no.</span><b>${esc(d.empNo)}</b></div>
+        <div><span>Login time</span><b>${fmt.dt(d.loginAt)}</b></div>
+        <div><span>Vehicle no.</span><b>${esc(prettyVehicle(d.vehicleNo))}</b></div>
+        <div><span>Transport</span><b>${esc(d.transport)}</b></div>
+        <div><span>Serial key</span><b>${esc(d.serialKey)}</b></div>
+        <div><span>Location</span><b>${esc(d.location)}</b></div>
+        <div><span>Driver</span><b>${esc([d.driverName, d.driverPhone].filter(Boolean).join(', ') || '—')}</b></div>
+      </div>
+      <div class="ps-h"><b>Master boxes loaded</b><span>Scanned ${fmt.dt(d.boxes[0]?.scannedAt)} to ${fmt.time(d.boxes.at(-1)?.scannedAt)}</span></div>
+      <div class="ps-grid">${cells.map((b, i) => `<div class="${b ? '' : 'blank'} ${Math.floor(i / cols) % 2 ? 'alt' : ''}"><i>${i + 1}</i>${b ? esc(b.boxNo || b.raw) : ''}</div>`).join('')}</div>
+      <div class="ps-foot">
+        <div class="ps-tot"><span>Total boxes</span><b>${d.boxes.length}</b></div>
+        <div class="ps-tot"><span>Total weight</span><b>${fmt.kg(d.totalWeight)}</b></div>
+        <div class="ps-photo">${d.driverPhoto ? `<img src="${d.driverPhoto}" alt="">` : '<em>No driver photo</em>'}<span>Driver photo</span></div>
+      </div>
+      <div class="ps-sign"><div>Loaded by</div><div>Driver</div><div>Security</div></div>
+    </div>
+    <footer class="ps-gen"><span>${esc(s.company)} &nbsp;|&nbsp; ${esc(s.docTitle)}</span><span>Generated ${fmt.dt(Date.now())}</span></footer>
+  </div>`;
+}
+
 export function printSheet(d, s) {
   const root = document.getElementById('print-root');
-  const cols = 8, min = 48;
-  const cells = Array.from({ length: Math.max(min, Math.ceil(d.boxes.length / cols) * cols) }, (_, i) => d.boxes[i]);
-  root.innerHTML = `
-  <div class="ps">
-    <header class="ps-head">
-      <div class="ps-logo">YUKEN</div>
-      <div class="ps-title"><strong>${esc(s.company)}</strong><span>${esc(s.docTitle)}</span></div>
-      <div class="ps-code">${esc(d.code)}</div>
-    </header>
-    <div class="ps-meta">
-      <div><span>Employee</span><b>${esc(d.empName)}</b></div>
-      <div><span>Employee no.</span><b>${esc(d.empNo)}</b></div>
-      <div><span>Login time</span><b>${fmt.dt(d.loginAt)}</b></div>
-      <div><span>Vehicle no.</span><b>${esc(prettyVehicle(d.vehicleNo))}</b></div>
-      <div><span>Transport</span><b>${esc(d.transport)}</b></div>
-      <div><span>Serial key</span><b>${esc(d.serialKey)}</b></div>
-      <div><span>Location</span><b>${esc(d.location)}</b></div>
-      <div><span>Driver</span><b>${esc([d.driverName, d.driverPhone].filter(Boolean).join(', ') || '—')}</b></div>
-    </div>
-    <div class="ps-grid">${cells.map((b, i) => `<div>${b ? `<i>${i + 1}</i>${esc(b.boxNo || b.raw)}` : ''}</div>`).join('')}</div>
-    <div class="ps-foot">
-      <div class="ps-tot"><span>Total boxes</span><b>${d.boxes.length}</b></div>
-      <div class="ps-tot"><span>Total weight</span><b>${fmt.kg(d.totalWeight)}</b></div>
-      <div class="ps-photo">${d.driverPhoto ? `<img src="${d.driverPhoto}" alt="">` : '<em>No driver photo</em>'}<span>Driver photo</span></div>
-    </div>
-    <div class="ps-sign"><div>Loaded by</div><div>Driver</div><div>Security</div></div>
-    <p class="ps-gen">Generated ${fmt.dt(Date.now())}</p>
-  </div>`;
-  const img = root.querySelector('img');
-  const go = () => { window.print(); };
-  if (img && !img.complete) img.onload = go; else setTimeout(go, 50);
+  root.innerHTML = sheetHTML(d, s);
+  const imgs = [...root.querySelectorAll('img')];
+  Promise.all(imgs.map(i => i.complete ? null : new Promise(r => { i.onload = i.onerror = r; }))).then(() => setTimeout(() => window.print(), 60));
 }
