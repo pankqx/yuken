@@ -1,7 +1,7 @@
 import { S } from './store.js';
 import { parseScan, sampleLabel, FIELD_LABELS } from './parse.js';
 import { $, $$, esc, fmt, initials, validate, normVehicle, prettyVehicle, compressImage, beep } from './util.js';
-import { icon, brand, toast, drawer, confirmBox, field, setErrors, formData } from './ui.js';
+import { icon, brand, toast, drawer, confirmBox, formDialog, field, setErrors, formData } from './ui.js';
 import { startCamera, scanOnce, loadScript } from './camera.js';
 import * as X from './export.js';
 
@@ -18,7 +18,7 @@ async function go() {
   try { await route_(); }
   catch (err) {
     console.error(err);
-    app.innerHTML = `<div class="login"><section class="login-form" style="grid-column:1/-1">${brand('Proof of loading')}<h1>Can't connect</h1><p>${esc(err.message || err)}</p><button class="btn primary lg" onclick="location.reload()">Try again</button></section></div>`;
+    app.innerHTML = `<div class="login"><section class="login-form" style="grid-column:1/-1">${brand(true)}<h1 style="margin-top:40px">Something went wrong</h1><p>${esc(err.message || err)}</p><button class="btn primary lg" onclick="location.reload()">Try again</button></section></div>`;
   }
 }
 
@@ -49,7 +49,7 @@ function render(html, after) {
   const paint = () => {
     app.innerHTML = typeof html === 'string' ? html : html.html;
     app.firstElementChild?.classList.add('view-enter');
-    (typeof html === 'object' && html.bind)?.();
+    if (typeof html === 'object') html.bind?.();
     after?.();
     window.scrollTo(0, 0);
   };
@@ -72,10 +72,14 @@ const NAV_ADMIN = [
   ['#/admin/settings', 'cog', 'Settings']
 ];
 
+const clockHTML = () => `<div class="clock"><b data-clock>${fmt.time(Date.now())}</b><span>${new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}</span></div>`;
+setInterval(() => $$('[data-clock]').forEach(el => { el.textContent = fmt.time(Date.now()); }), 15000);
+
 function adminShell(active, content) {
   const nav = NAV_ADMIN.map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t}</span></a>`).join('');
   return `<div class="shell">
-    <aside class="side">${brand(SETTINGS.docTitle)}<nav class="nav">${nav}</nav><div class="grow"></div>
+    <aside class="side">${brand()}<nav class="nav">${nav}</nav><div class="grow"></div>
+      ${clockHTML()}
       <div class="me"><div class="avatar">${initials(ME.user.name)}</div><div><b>${esc(ME.user.name)}</b><span>Admin · ${esc(ME.user.empNo)}</span></div>
       <button class="btn ghost icon sm" data-logout title="Sign out" aria-label="Sign out">${icon('logout')}</button></div></aside>
     <div>${content}</div>
@@ -87,8 +91,8 @@ function topbar(back) {
   const u = ME.user;
   return `<header class="topbar">
     ${back ? `<a class="btn ghost icon" href="${back}" aria-label="Back">${icon('back')}</a>` : ''}
-    ${brand(SETTINGS.company)}
-    <div class="who"><div><b>${esc(u.name)}</b><span>Emp. ${esc(u.empNo)} · logged in ${fmt.time(ME.session.loginAt)}</span></div>
+    ${brand()}
+    <div class="who"><div><b>${esc(u.name)}</b><span>Emp. ${esc(u.empNo)} · signed in ${fmt.time(ME.session.loginAt)}</span></div>
       <div class="avatar">${initials(u.name)}</div>
       <button class="btn ghost icon" data-logout title="Sign out" aria-label="Sign out">${icon('logout')}</button></div>
   </header>`;
@@ -99,18 +103,31 @@ const frame = (active, content, back) => ME.user.role === 'admin' ? adminShell(a
 
 document.addEventListener('click', async e => {
   if (e.target.closest('[data-logout]')) {
-    if (!(await confirmBox({ title: 'Sign out?', text: 'Open lists stay saved. You can continue them after signing in again.', ok: 'Sign out' }))) return;
+    if (!(await confirmBox({ title: 'Sign out?', text: 'Open lists stay saved. The next person can sign in on this computer.', ok: 'Sign out' }))) return;
     await S.logout(ME?.user); ME = null; location.hash = '#/login'; go();
   }
 });
 
+// ---------- the sign-in stage (shared by setup, sign-in, new password) ----------
+function stage(formHTML) {
+  return `<div class="login">
+    <section class="login-art" id="hero" aria-hidden="true">
+      <div class="veil"></div>
+      <div class="top">${brand(true)}</div>
+      <div class="stamp"><div><strong>Every box, accounted for.</strong><p>Scan master-box labels straight into the vehicle's loading list.</p></div><div class="readout" id="readout"></div></div>
+    </section>
+    <section class="login-form">${formHTML}</section></div>`;
+}
+function mountStage() {
+  import('./hero.js').then(m => { const host = $('#hero'); if (host) cleanup.push(m.mountHero(host, $('#readout'))); }).catch(() => {});
+}
+
 // ---------- first run ----------
 function viewSetup() {
   return {
-    html: `<div class="login">${loginArt()}<section class="login-form">
-      ${brand('First-time setup')}
+    html: stage(`
       <h1>Create the admin account</h1>
-      <p>The admin adds employees, sees every dispatch list and exports reports. Keep these details private.</p>
+      <p>The admin adds employees, sees every loading list and exports reports. This runs once, on the dock computer.</p>
       <form id="f" novalidate>
         <div class="grid2">
           ${field({ name: 'name', label: 'Full name', attrs: 'autocomplete="name"' })}
@@ -120,8 +137,9 @@ function viewSetup() {
         ${field({ name: 'username', label: 'Username', attrs: 'autocapitalize="none" autocomplete="username"', hint: 'Used to sign in, e.g. admin' })}
         ${field({ name: 'password', label: 'Password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}
         <button class="btn primary lg" type="submit">Create admin and continue</button>
-      </form></section></div>`,
+      </form>`),
     bind() {
+      mountStage();
       $('#f').onsubmit = async e => {
         e.preventDefault();
         const v = formData(e.target);
@@ -139,30 +157,10 @@ function viewSetup() {
   };
 }
 
-// ---------- login ----------
-function loginArt() {
-  return `<section class="login-art" aria-hidden="true">
-    <div class="tag">
-      <div class="tag-bars"></div>
-      <table>
-        <tr><td>PS Box Num:</td><td>4270036177-3</td></tr>
-        <tr><td>Box Weight:</td><td>28.7</td></tr>
-        <tr><td>Date Packed:</td><td>12-Nov-26</td></tr>
-        <tr><td>Customer:</td><td>Grow-Wel Engineering Export</td></tr>
-        <tr><td>Transporter:</td><td>COLLECTION</td></tr>
-      </table>
-      <div class="tag-item"><div><b>Item Description:</b><span class="code">HPV3M-50-F-LAL-K1-10</span></div><div><b>Qty:</b>1</div></div>
-      <div class="laser"></div>
-      <div class="tag-ok">${icon('check')} Box #1 added</div>
-    </div>
-    <div class="stamp"><strong>Every box, accounted for.</strong>Scan master-box labels straight into the loading list.</div>
-  </section>`;
-}
-
+// ---------- sign in ----------
 function viewLogin() {
   return {
-    html: `<div class="login">${loginArt()}<section class="login-form">
-      ${brand(SETTINGS.company)}
+    html: stage(`
       <h1>Sign in to start loading</h1>
       <p>Use the username or employee number your admin gave you.</p>
       <form id="f" novalidate>
@@ -172,15 +170,29 @@ function viewLogin() {
           <button type="button" data-eye aria-label="Show password">${icon('eye')}</button></div><div class="msg"></div></div>
         <div id="err"></div>
         <button class="btn primary lg" type="submit">Sign in</button>
+        <button type="button" class="linkbtn" id="forgot">Forgot password? Reset it with the master PIN</button>
       </form>
-      <p class="login-foot">${esc(SETTINGS.docTitle)} · ${esc(SETTINGS.plant || '')}<br>Forgot your password? Ask the admin to reset it.</p>
-    </section></div>`,
+      <p class="login-foot">${esc(SETTINGS.company)} · ${esc(SETTINGS.docTitle)}${SETTINGS.plant ? ' · ' + esc(SETTINGS.plant) : ''}</p>`),
     bind() {
+      mountStage();
       $('[data-eye]').onclick = e => {
         const i = $('#pw'); const show = i.type === 'password';
         i.type = show ? 'text' : 'password';
         e.currentTarget.innerHTML = icon(show ? 'eyeOff' : 'eye');
       };
+      $('#forgot').onclick = () => formDialog({
+        title: 'Reset a password',
+        text: 'The master PIN is held by the person responsible for this computer. It can reset any account, including the admin.',
+        body: `${field({ name: 'login', label: 'Username or employee no.', value: $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
+          ${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
+          ${field({ name: 'next', label: 'New password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}`,
+        ok: 'Reset password',
+        async onSubmit(v, form) {
+          if (!setErrors(form, { login: validate.required(v.login), pin: validate.required(v.pin), next: validate.password(v.next) })) return false;
+          const u = await S.masterReset(v.login, v.pin, v.next);
+          return u;
+        }
+      }).then(u => { if (u) { toast(`Password reset for ${u.name}. Sign in with the new one.`); $('#f_username').value = u.username; $('#pw').focus(); } });
       $('#f').onsubmit = async e => {
         e.preventDefault();
         const v = formData(e.target);
@@ -202,8 +214,7 @@ function viewLogin() {
 
 function viewChangePassword(forced) {
   return {
-    html: `<div class="login">${loginArt()}<section class="login-form">
-      ${brand(SETTINGS.company)}
+    html: stage(`
       <h1>Set your own password</h1>
       <p>${forced ? 'Your account was set up with a temporary password. Choose one only you know.' : ''}</p>
       <form id="f" novalidate>
@@ -211,8 +222,9 @@ function viewChangePassword(forced) {
         ${field({ name: 'again', label: 'Type it again', type: 'password', attrs: 'autocomplete="new-password"' })}
         <button class="btn primary lg" type="submit">Save password</button>
         <button class="btn ghost" type="button" data-logout>Sign out</button>
-      </form></section></div>`,
+      </form>`),
     bind() {
+      mountStage();
       $('#f').onsubmit = async e => {
         e.preventDefault();
         const v = formData(e.target);
@@ -237,7 +249,17 @@ route(/^\/home$/, async () => {
   const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   render({
     html: frame('#/home', `<main class="page">
-      <section class="hello"><div><h1>${greet}, ${esc(ME.user.name.split(' ')[0])}</h1>
+      <section class="hello">      <pre aria-hidden="true">   ______________    ______________
+  /             /|  /             /|
+ /_____________/ | /_____________/ |
+ |  ▌▌▌▐▐▌▌▐   | | |  ▌▐▌▌▌▐▐▌   | |
+ |  4270036177 | | |  4270036177 | |
+ |_____________|/  |_____________|/
+   ______________    ______________
+  /             /|  /             /|
+ /_____________/ | /_____________/ |
+ |  ▌▐▐▌▌▌▐▌   | | |  ▌▌▐▌▐▐▌▌   | |
+ |_____________|/  |_____________|/</pre><div><h1>${greet}, ${esc(ME.user.name.split(' ')[0])}</h1>
         <p>${today.length ? `Today: ${today.length} list${today.length > 1 ? 's' : ''}, ${fmt.num(today.reduce((s, d) => s + d.boxes.length, 0))} boxes loaded.` : 'No lists yet today. Start one when the vehicle is at the dock.'}</p></div>
         <a class="btn primary lg" href="#/new">${icon('plus')} New loading list</a></section>
       ${open.length ? `<h2 class="sec">Continue loading</h2><div class="lists">${open.map(listCard).join('')}</div>` : ''}
@@ -419,7 +441,12 @@ route(/^\/scan\/(\w+)$/, async id => {
         <div class="tray">
           <div class="tray-head"><span>Loaded on this vehicle</span><span id="last">${d.boxes.length ? 'Last scan ' + fmt.time(d.boxes.at(-1).scannedAt) : ''}</span></div>
           <div class="tray-grid" id="tray">${tiles()}</div>
-          <div class="empty" id="empty" ${d.boxes.length ? 'hidden' : ''}>${icon('box')}<b>No boxes yet</b>Each scanned label lands here. Scanning the same box twice is blocked.</div>
+          <div class="empty" id="empty" ${d.boxes.length ? 'hidden' : ''}><pre aria-hidden="true">   ____________
+  /           /|
+ /___________/ |
+ | ▌▐▌▌▐▐▌▌  | |
+ |  scan me  | /
+ |___________|/</pre><b>No boxes yet</b>Each scanned label lands here. Scanning the same box twice is blocked.</div>
         </div>
         <div class="closebar">
           <button class="btn ghost" id="test" title="Adds a sample label — for training">${icon('play')} Test label</button>
@@ -468,7 +495,8 @@ route(/^\/scan\/(\w+)$/, async id => {
           bump($('#c-box'), d.boxes.length);
           bump($('#c-wt'), fmtW(d.totalWeight));
           $('#last').textContent = 'Last scan ' + fmt.time(box.scannedAt);
-          say(`Box #${box.seq} added — ${esc(box.boxNo || box.raw)}${box.item ? ' · ' + esc(box.item) : ''}`);
+          say(`Box #${box.seq} added — ${esc(box.boxNo || box.raw)}${box.item ? ' · ' + esc(box.item) : ''}`, 'ok');
+          const w = $('.scanfield .wrap'); w.classList.remove('zap'); void w.offsetWidth; w.classList.add('zap');
         }
       }
 
@@ -533,6 +561,7 @@ route(/^\/scan\/(\w+)$/, async id => {
         await cam?.stop(); cam = null;
         await S.closeDispatch(d, ME.user, { weightEntered: isNaN(w) || w === d.totalWeight ? null : w });
         toast(`${d.code} closed`);
+        sessionStorage.setItem('yk.preview', d.id);
         location.hash = `#/list/${d.id}`;
       };
     }
@@ -590,9 +619,10 @@ route(/^\/list\/(\w+)$/, async id => {
           <div class="counter"><div><span>Total boxes</span><b>${d.boxes.length}</b></div><div><span>Total weight</span><b>${fmtW(d.totalWeight)}</b></div></div>
           <div class="panel"><div class="panel-body">
             <div class="export-grid">
-              <button class="btn" data-x="xlsx">${icon('xls')} Excel</button>
-              <button class="btn" data-x="pdf">${icon('pdf')} PDF</button>
+              <button class="btn primary span" data-x="preview">${icon('eye')} Preview POL sheet</button>
               <button class="btn" data-x="print">${icon('print')} Print</button>
+              <button class="btn" data-x="pdf">${icon('pdf')} PDF</button>
+              <button class="btn" data-x="xlsx">${icon('xls')} Excel</button>
               <button class="btn" data-x="share">${icon('share')} Share</button>
             </div></div></div>
           <div class="panel"><div class="panel-body">
@@ -610,18 +640,11 @@ route(/^\/list\/(\w+)$/, async id => {
       </div></main>`, '#/home'),
     bind() {
       $$('tr[data-k]').forEach(tr => tr.onclick = () => boxDrawer(d.boxes.find(b => b.key === tr.dataset.k), d));
-      $$('[data-x]').forEach(b => b.onclick = async () => {
-        const kind = b.dataset.x;
-        b.classList.add('busy');
-        try {
-          if (kind === 'xlsx') { await loadScript('vendor/xlsx.full.min.js'); X.downloadExcel(d, s); toast('Excel downloaded'); }
-          if (kind === 'pdf') { await loadPdf(); X.downloadPDF(d, s); toast('PDF downloaded'); }
-          if (kind === 'print') X.printSheet(d, s);
-          if (kind === 'share') { await loadPdf(); const r = await X.share(d, s); if (r === 'fallback') toast('PDF downloaded — attach it in WhatsApp'); }
-          await S.log(ME.user, 'list.' + kind, d.code);
-        } catch (err) { if (err?.name !== 'AbortError') toast(err.message || 'Could not export', 'bad'); }
-        b.classList.remove('busy');
+      $$('[data-x]').forEach(b => b.onclick = () => {
+        if (b.dataset.x === 'preview') return openPreview(d, s);
+        runExport(b.dataset.x, d, s, b);
       });
+      if (sessionStorage.getItem('yk.preview') === d.id) { sessionStorage.removeItem('yk.preview'); setTimeout(() => openPreview(d, s), 350); }
       $('[data-reopen]')?.addEventListener('click', async () => {
         if (!(await confirmBox({ title: 'Reopen this list?', text: 'Scanning will be allowed again. The reopen is recorded in Activity.', ok: 'Reopen' }))) return;
         await S.reopenDispatch(d, ME.user); toast('List reopened'); location.hash = `#/scan/${d.id}`;
@@ -634,6 +657,38 @@ route(/^\/list\/(\w+)$/, async id => {
     }
   });
 });
+
+async function runExport(kind, d, s, b) {
+  b?.classList.add('busy');
+  try {
+    if (kind === 'xlsx') { await loadScript('vendor/xlsx.full.min.js'); X.downloadExcel(d, s); toast('Excel downloaded'); }
+    if (kind === 'pdf') { await loadPdf(); await X.downloadPDF(d, s); toast('PDF downloaded'); }
+    if (kind === 'print') X.printSheet(d, s);
+    if (kind === 'share') { await loadPdf(); const r = await X.share(d, s); if (r === 'fallback') toast('PDF downloaded — attach it in WhatsApp'); }
+    await S.log(ME.user, 'list.' + kind, d.code);
+  } catch (err) { if (err?.name !== 'AbortError') toast(err.message || 'Could not export', 'bad'); }
+  b?.classList.remove('busy');
+}
+
+// Full-screen preview of the A4 POL sheet, with the output actions beside it.
+function openPreview(d, s) {
+  const el = document.createElement('div');
+  el.className = 'preview'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+  el.innerHTML = `<div class="stage"><div class="sheet">${X.sheetHTML(d, s)}</div></div>
+    <aside class="tools"><h2>POL sheet</h2><p>${esc(d.code)} · ${esc(prettyVehicle(d.vehicleNo))} · ${d.boxes.length} boxes</p>
+      <button class="btn primary" data-p="print">${icon('print')} Print</button>
+      <button class="btn" data-p="pdf">${icon('pdf')} Download PDF</button>
+      <button class="btn" data-p="xlsx">${icon('xls')} Download Excel</button>
+      <button class="btn" data-p="share">${icon('share')} Share</button>
+      <span class="grow"></span>
+      <button class="btn ghost" data-p="close">${icon('x')} Close preview</button></aside>`;
+  document.body.appendChild(el);
+  const close = () => { el.remove(); document.removeEventListener('keydown', key); };
+  const key = e => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', key);
+  el.querySelectorAll('[data-p]').forEach(b => b.onclick = () => b.dataset.p === 'close' ? close() : runExport(b.dataset.p, d, s, b));
+  el.querySelector('[data-p=print]').focus();
+}
 
 const loadPdf = async () => { await loadScript('vendor/jspdf.umd.min.js'); await loadScript('vendor/jspdf.plugin.autotable.min.js'); };
 
@@ -657,7 +712,7 @@ route(/^\/admin$/, async () => {
       <div class="page-head"><div><h1>Overview</h1><p>${fmt.date(Date.now())} · ${esc(SETTINGS.plant || SETTINGS.company)}</p></div>
         <div class="actions"><a class="btn" href="#/admin/people">${icon('plus')} Add employee</a><a class="btn primary" href="#/new">${icon('scan')} New list</a></div></div>
       <div class="kpis">
-        <div class="kpi"><span>Boxes loaded today</span><b>${fmt.num(boxesToday)}</b><small>${tl.length} list${tl.length === 1 ? '' : 's'}</small></div>
+        <div class="kpi hero">${spark(days.map(x => x.n))}<span>Boxes loaded today</span><b>${fmt.num(boxesToday)}</b><small>${tl.length} list${tl.length === 1 ? '' : 's'}</small></div>
         <div class="kpi"><span>Weight today</span><b>${fmtW(wtToday)}</b><small>kg</small></div>
         <div class="kpi"><span>Loading now</span><b>${open.length}</b><small>${open.length ? open.map(d => prettyVehicle(d.vehicleNo)).slice(0, 2).join(', ') : 'no open lists'}</small></div>
         <div class="kpi"><span>On shift today</span><b>${onShift.length}</b><small>of ${people.filter(p => p.active).length} active accounts</small></div>
@@ -677,7 +732,13 @@ route(/^\/admin$/, async () => {
   });
 }, { admin: true });
 
-// Re-run when any list changes on another phone (cloud mode only).
+function spark(vals) {
+  const max = Math.max(1, ...vals), w = 84, h = 30;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * w},${h - 3 - (v / max) * (h - 6)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="${pts}"/><circle cx="${w}" cy="${h - 3 - (vals.at(-1) / max) * (h - 6)}" r="3" fill="currentColor"/></svg>`;
+}
+
+// Re-run when lists change (no-op on a single computer).
 function live(fn) {
   let t;
   const off = S.watch(() => { clearTimeout(t); t = setTimeout(fn, 400); });
@@ -912,13 +973,14 @@ route(/^\/admin\/settings$/, async () => {
           <form class="inline" data-add="locations"><input class="input" placeholder="Add a location" required><button class="btn">${icon('plus')} Add</button></form></div></div>
         <div class="panel"><div class="panel-head"><h2>Your account</h2></div><div class="panel-body" style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn" id="pw">${icon('lock')} Change my password</button></div></div>
+        <div class="panel"><div class="panel-head"><h2>Master PIN</h2></div><div class="panel-body" style="display:grid;gap:12px">
+          <p class="mute" style="margin:0;font-size:14px">Resets any password from the sign-in screen, including the admin's. Five wrong tries lock it for 10 minutes.</p>
+          <div><button class="btn" id="mpin">${icon('key')} Change master PIN</button></div></div></div>
         <div class="panel"><div class="panel-head"><h2>Data</h2></div><div class="panel-body" style="display:grid;gap:12px">
-          ${S.mode === 'cloud'
-            ? '<p class="mute" style="margin:0;font-size:14px"><span class="pill closed">Cloud</span> Saved to Firebase and shared by every phone. Download a backup each month for your own records.</p>'
-            : '<p class="mute" style="margin:0;font-size:14px"><span class="pill off">This device only</span> Firebase is not connected yet, so data lives in this browser. Add the Firebase config to share data between phones.</p>'}
+          <p class="mute" style="margin:0;font-size:14px">Everything is saved on this computer, in this browser. Download a backup every Friday and keep it on a pen drive or in email.</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn" id="bk">${icon('download')} Download backup</button>
-            ${S.mode === 'local' ? `<label class="btn">${icon('upload')} Restore backup<input type="file" accept=".json" id="rs" class="sr"></label>` : ''}
+            <label class="btn">${icon('upload')} Restore backup<input type="file" accept=".json" id="rs" class="sr"></label>
             <button class="btn" id="demo">${icon('play')} Load demo data</button>
           </div></div></div>
       </div></main>`),
@@ -943,6 +1005,18 @@ route(/^\/admin\/settings$/, async () => {
             try { await S.changePassword(ME.user, v.cur, v.next); close(); toast('Password changed'); } catch (err) { setErrors(f, { cur: err.message }); }
           }; } });
       };
+      $('#mpin').onclick = () => formDialog({
+        title: 'Change master PIN',
+        text: 'Use 8 to 16 digits. Write it down and keep it somewhere safe, away from this computer.',
+        body: `${field({ name: 'cur', label: 'Current master PIN', type: 'password', attrs: 'inputmode="numeric"' })}${field({ name: 'next', label: 'New master PIN', type: 'password', attrs: 'inputmode="numeric"' })}${field({ name: 'again', label: 'Type it again', type: 'password', attrs: 'inputmode="numeric"' })}`,
+        ok: 'Change PIN',
+        async onSubmit(v, form) {
+          const digits = String(v.next).replace(/\D/g, '');
+          if (!setErrors(form, { cur: validate.required(v.cur), next: /^\d{8,16}$/.test(digits) && digits === v.next ? '' : '8 to 16 digits, numbers only', again: v.again === v.next ? '' : 'PINs do not match' })) return false;
+          await S.changeMasterPin(v.cur, v.next, ME.user);
+          return true;
+        }
+      }).then(ok => ok && toast('Master PIN changed'));
       $('#bk').onclick = async () => {
         const data = await S.backup();
         const { download } = await import('./util.js');
@@ -967,5 +1041,6 @@ route(/^\/admin\/settings$/, async () => {
 }, { admin: true });
 
 // ---------- boot ----------
+const hideBoot = () => { const b = $('#boot'); if (!b) return; setTimeout(() => { b.classList.add('gone'); clearInterval(window.__boot); setTimeout(() => b.remove(), 450); }, 350); };
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
-go();
+go().then(hideBoot);
