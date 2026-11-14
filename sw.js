@@ -1,5 +1,5 @@
 // Offline cache: the dock Wi-Fi drops, the app should not.
-const CACHE = 'yuken-pol-v1';
+const CACHE = 'yuken-pol-v2';
 const CORE = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/store.js', 'js/store-local.js', 'js/common.js', 'js/config.js', 'js/hero.js', 'js/db.js', 'js/util.js', 'js/ui.js', 'js/parse.js', 'js/export.js', 'js/camera.js',
   'vendor/html5-qrcode.min.js', 'vendor/three.min.js', 'assets/yuken-logo.svg', 'assets/yuken-logo-white.svg', 'vendor/xlsx.full.min.js', 'vendor/jspdf.umd.min.js', 'vendor/jspdf.plugin.autotable.min.js', 'icons/icon.svg', 'manifest.webmanifest'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting())); });
