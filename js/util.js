@@ -104,9 +104,18 @@ export function compressImage(file, max = 900, quality = 0.72) {
 
 // ---------- Feedback ----------
 let audio;
-export function beep(kind = 'ok') {
+// Phones only allow sound after a tap, so the first tap anywhere wakes the
+// audio up; later scans can then beep on their own.
+export function unlockAudio() {
   try {
     audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume();
+  } catch { /* no audio */ }
+}
+
+export function beep(kind = 'ok') {
+  try {
+    unlockAudio();
     const tones = kind === 'ok' ? [[1320, 0.07]] : kind === 'dup' ? [[420, 0.12], [320, 0.16]] : [[220, 0.25]];
     let t = audio.currentTime;
     for (const [f, d] of tones) {

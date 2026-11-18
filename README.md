@@ -8,13 +8,24 @@ A web app for Yuken India Limited's finished-goods dispatch dock. Employees scan
 
 - **Strict accounts.** Only the admin can add employees. Each record holds name, DOB (must be 18+), mobile, address, PIN code, optional Aadhaar (checked with the Verhoeff checksum and shown masked), employee no., designation, joining date and an emergency contact. It also records who created the account, when, and from what device. New accounts get a temporary password that must be changed at first sign-in. Disabled accounts are locked out right away.
 - **Header before scanning.** Vehicle no. (Indian plate format), transport (drop-down, or type a name), serial key (type it or scan it), location, driver name and mobile, and the driver photo. Scanning stays locked until all of these are filled in.
-- **Scanning.** Uses a USB barcode gun (including multi-line QR labels), or a webcam/phone camera (QR, Code 128/39/93, EAN, ITF, Data Matrix, PDF417). Scans are queued, so none are lost when the gun is fast.
+- **Scanning.** On the dock computer, a USB barcode gun (including multi-line QR labels). On phones and tablets the camera starts by itself and works like a barcode gun: every label it sees is captured with a beep and a green flash, and the same label is not re-read while it stays in view. Scans are queued, so none are lost.
+- **Driver photo.** Opens the camera inside the app (back camera, with a switch button), then Take photo → Use photo.
 - **Label parsing.** Reads bare box numbers (`4270036177-3`), `Key: value` labels, single-line labels and JSON. It pulls out the box no., weight, date packed, customer, ship-to, transporter, item, qty and unique ID.
 - **Duplicate blocking.** A box already on the list shows "Already scanned" and its tile flashes. A box already loaded on another vehicle is blocked too.
 - **POL sheet.** A designed A4 sheet in Yuken colours, with a full-screen preview, then Print, PDF, Excel or Share.
 - **Admin panel.** Overview (today's boxes and weight, what is loading now, a 7-day chart, latest activity), all lists with filters (search also finds box numbers), an Excel report, employees, an activity log, and settings for the print header, transporters, locations, rules and the master PIN.
 - **Sign-in scene.** A three.js pallet of cartons, redrawn live as coloured ASCII, with a laser scanning each box.
 - **Works offline.** Once loaded, the app keeps working if the dock Wi-Fi drops.
+
+## Who can do what
+
+| Role | Who | Can do |
+| --- | --- | --- |
+| Super admin | Chetan | Everything: add or change admins, settings, master PIN, backups, delete lists |
+| Admin | Mahesh, Sheela (the bosses) | Dashboard, all lists and exports, reopen lists, add and manage employees, activity |
+| Employee | Dock staff | Create lists, scan, close, print their own lists |
+
+The first account created on a computer becomes the super admin. The super admin adds the admins from **Employees → Add employee → Access: Admin**.
 
 ## How it runs at the dock
 

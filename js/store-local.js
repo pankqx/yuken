@@ -6,7 +6,18 @@ import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, totals, renumber, demoLists, DEMO_
 
 const SESSION_KEY = 'yk.session';
 
-export async function init() {}
+// Roles: 'super' (the owner, one person), 'admin' (managers), 'employee'.
+export const isAdmin = u => u?.role === 'admin' || u?.role === 'super';
+export const isSuper = u => u?.role === 'super';
+
+export async function init() {
+  // Older data had only 'admin'. The first admin created becomes the super admin.
+  const all = await db.all('users');
+  if (!all.some(u => u.role === 'super')) {
+    const first = all.filter(u => u.role === 'admin').sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (first) { first.role = 'super'; await db.put('users', first); }
+  }
+}
 
 // ---------- settings ----------
 export async function getSettings() {
@@ -32,7 +43,7 @@ export async function users() {
   return (await db.all('users')).sort((a, b) => a.name.localeCompare(b.name));
 }
 export async function hasAdmin() {
-  return (await db.all('users')).some(u => u.role === 'admin');
+  return (await db.all('users')).some(isAdmin);
 }
 async function findUser(login) {
   const u = String(login).trim().toLowerCase();
@@ -64,7 +75,7 @@ export async function saveUser(data, actor, password) {
 }
 
 export async function setupAdmin(data, password) {
-  await saveUser({ ...data, role: 'admin' }, null, password);
+  await saveUser({ ...data, role: 'super' }, null, password);
   return login(data.username, password);
 }
 

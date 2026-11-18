@@ -21,11 +21,12 @@ export async function startCamera(elId, onCode) {
   let last = '', lastAt = 0;
   await cam.start(
     { facingMode: 'environment' },
-    { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * 0.72), height: Math.floor(h * 0.64) }), aspectRatio: 4 / 3 },
+    { fps: 15, aspectRatio: 4 / 3, disableFlip: true }, // no qrbox: the whole picture is searched, like a barcode gun
     text => {
-      // The same code stays in view for a while — ignore repeats for 2.5 s.
+      // A label stays in view for a while. Ignore the same code until a
+      // different one is read, or until it has been out of sight for 8 s.
       const now = Date.now();
-      if (text === last && now - lastAt < 2500) return;
+      if (text === last && now - lastAt < 8000) { lastAt = now; return; }
       last = text; lastAt = now;
       onCode(text);
     },
@@ -52,5 +53,75 @@ export function scanOnce(title = 'Scan code') {
     startCamera('once-reader', code => done(code)).then(c => { cam = c; }).catch(err => {
       el.querySelector('.camera').outerHTML = `<div class="form-err">${icon('alert')} Camera unavailable: ${err?.message || err}. Type the code instead.</div>`;
     });
+  });
+}
+
+// Driver photo: opens the camera straight away (no file picker). Resolves
+// with a JPEG data URL, or null if cancelled. Falls back to the phone's own
+// camera app if the browser cannot open the camera itself.
+export function takePhoto(title = 'Driver photo') {
+  return new Promise(resolve => {
+    const scrim = document.createElement('div'); scrim.className = 'scrim top';
+    const el = document.createElement('div'); el.className = 'dialog snap';
+    el.innerHTML = `<h2>${title}</h2>
+      <div class="snap-view"><video playsinline muted autoplay></video><img alt="" hidden><div class="snap-flash"></div></div>
+      <div class="row snap-row">
+        <button class="btn ghost" data-c>Cancel</button>
+        <button class="btn icon" data-flip title="Switch camera" aria-label="Switch camera">${icon('undo')}</button>
+        <button class="btn primary" data-shot>${icon('camera')} Take photo</button>
+        <button class="btn" data-retake hidden>${icon('undo')} Retake</button>
+        <button class="btn primary" data-use hidden>${icon('check')} Use photo</button>
+      </div>`;
+    document.body.append(scrim, el);
+    const video = el.querySelector('video'), img = el.querySelector('img');
+    let stream = null, facing = 'environment', shot = null;
+    const stop = () => { stream?.getTracks().forEach(t => t.stop()); stream = null; };
+    const done = v => { stop(); el.remove(); scrim.remove(); resolve(v); };
+    const start = async () => {
+      stop();
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
+        video.srcObject = stream; await video.play();
+      } catch (err) {
+        done(null);
+        fallbackPicker().then(resolve);
+      }
+    };
+    const show = (mode) => {
+      const live = mode === 'live';
+      video.hidden = !live; img.hidden = live;
+      el.querySelector('[data-shot]').hidden = !live; el.querySelector('[data-flip]').hidden = !live;
+      el.querySelector('[data-retake]').hidden = live; el.querySelector('[data-use]').hidden = live;
+    };
+    el.querySelector('[data-c]').onclick = () => done(null);
+    scrim.onclick = () => done(null);
+    el.querySelector('[data-flip]').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; start(); };
+    el.querySelector('[data-shot]').onclick = () => {
+      const w = video.videoWidth, h = video.videoHeight; if (!w) return;
+      const scale = Math.min(1, 900 / Math.max(w, h));
+      const c = document.createElement('canvas'); c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+      c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+      shot = c.toDataURL('image/jpeg', 0.72);
+      img.src = shot; show('still');
+      const f = el.querySelector('.snap-flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on');
+    };
+    el.querySelector('[data-retake]').onclick = () => { shot = null; show('live'); };
+    el.querySelector('[data-use]').onclick = () => done(shot);
+    if (!navigator.mediaDevices?.getUserMedia) { done(null); fallbackPicker().then(resolve); return; }
+    start();
+  });
+}
+
+// Last resort: the phone's own camera app via a file input that asks for the camera.
+function fallbackPicker() {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*'; input.setAttribute('capture', 'environment');
+    input.onchange = async () => {
+      const file = input.files[0]; if (!file) return resolve(null);
+      const { compressImage } = await import('./util.js');
+      resolve(await compressImage(file, 900, 0.72));
+    };
+    input.click();
   });
 }

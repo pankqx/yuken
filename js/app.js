@@ -1,11 +1,16 @@
 import { S } from './store.js';
 import { parseScan, sampleLabel, FIELD_LABELS } from './parse.js';
-import { $, $$, esc, fmt, initials, validate, normVehicle, prettyVehicle, compressImage, beep } from './util.js';
+import { $, $$, esc, fmt, initials, validate, normVehicle, prettyVehicle, compressImage, beep, unlockAudio } from './util.js';
 import { icon, brand, toast, drawer, confirmBox, formDialog, field, setErrors, formData } from './ui.js';
-import { startCamera, scanOnce, loadScript } from './camera.js';
+import { startCamera, scanOnce, loadScript, takePhoto } from './camera.js';
 import * as X from './export.js';
 
 const app = $('#app');
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+const isAdmin = u => u?.role === 'admin' || u?.role === 'super';
+const isSuper = u => u?.role === 'super';
+const ROLE_NAME = { super: 'Super admin', admin: 'Admin', employee: 'Employee' };
+document.addEventListener('pointerdown', unlockAudio, { capture: true });
 let ME = null;        // { user, session }
 let SETTINGS = null;
 let cleanup = [];     // teardown callbacks for the current view (camera, listeners)
@@ -35,14 +40,15 @@ async function route_() {
   for (const r of routes) {
     const m = hash.match(r.re);
     if (!m) continue;
-    if (r.admin && ME.user.role !== 'admin') break;
+    if (r.admin && !isAdmin(ME.user)) break;
+    if (r.super && !isSuper(ME.user)) { toast('Only the super admin can open this page', 'bad'); break; }
     try { return await r.fn(...m.slice(1)); }
     catch (err) {
       console.error(err);
       return render(frame('', `<main class="page"><div class="panel empty"><b>Could not open this page</b>${esc(err.message || err)}<br><a class="btn" href="#/">Go to start</a></div></main>`));
     }
   }
-  location.replace(ME.user.role === 'admin' ? '#/admin' : '#/home');
+  location.replace(isAdmin(ME.user) ? '#/admin' : '#/home');
 }
 
 function render(html, after) {
@@ -76,14 +82,15 @@ const clockHTML = () => `<div class="clock"><b data-clock>${fmt.time(Date.now())
 setInterval(() => $$('[data-clock]').forEach(el => { el.textContent = fmt.time(Date.now()); }), 15000);
 
 function adminShell(active, content) {
-  const nav = NAV_ADMIN.map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t}</span></a>`).join('');
+  const items = NAV_ADMIN.filter(n => n[0] !== '#/admin/settings' || isSuper(ME.user));
+  const nav = items.map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t}</span></a>`).join('');
   return `<div class="shell">
     <aside class="side">${brand()}<nav class="nav">${nav}</nav><div class="grow"></div>
       ${clockHTML()}
-      <div class="me"><div class="avatar">${initials(ME.user.name)}</div><div><b>${esc(ME.user.name)}</b><span>Admin · ${esc(ME.user.empNo)}</span></div>
+      <div class="me"><div class="avatar">${initials(ME.user.name)}</div><div><b>${esc(ME.user.name)}</b><span>${ROLE_NAME[ME.user.role]} · ${esc(ME.user.empNo)}</span></div>
       <button class="btn ghost icon sm" data-logout title="Sign out" aria-label="Sign out">${icon('logout')}</button></div></aside>
     <div>${content}</div>
-    <nav class="tabbar">${NAV_ADMIN.filter(n => n[0] !== '#/admin/activity').map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t.split(' ')[0]}</span></a>`).join('')}</nav>
+    <nav class="tabbar">${items.filter(n => n[0] !== '#/admin/activity').map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t.split(' ')[0]}</span></a>`).join('')}</nav>
   </div>`;
 }
 
@@ -99,7 +106,7 @@ function topbar(back) {
 }
 
 // One shell for everything an employee sees; admins get the sidebar.
-const frame = (active, content, back) => ME.user.role === 'admin' ? adminShell(active, content) : `<div class="shell solo"><div>${topbar(back)}${content}</div></div>`;
+const frame = (active, content, back) => isAdmin(ME.user) ? adminShell(active, content) : `<div class="shell solo"><div>${topbar(back)}${content}</div></div>`;
 
 document.addEventListener('click', async e => {
   if (e.target.closest('[data-logout]')) {
@@ -126,8 +133,8 @@ function mountStage() {
 function viewSetup() {
   return {
     html: stage(`
-      <h1>Create the admin account</h1>
-      <p>The admin adds employees, sees every loading list and exports reports. This runs once, on the dock computer.</p>
+      <h1>Create the super admin</h1>
+      <p>The super admin (for example Chetan) controls everything: other admins, employees, settings and the master PIN. This runs once.</p>
       <form id="f" novalidate>
         <div class="grid2">
           ${field({ name: 'name', label: 'Full name', attrs: 'autocomplete="name"' })}
@@ -136,7 +143,7 @@ function viewSetup() {
         ${field({ name: 'phone', label: 'Mobile number', type: 'tel', attrs: 'inputmode="numeric" maxlength="10"' })}
         ${field({ name: 'username', label: 'Username', attrs: 'autocapitalize="none" autocomplete="username"', hint: 'Used to sign in, e.g. admin' })}
         ${field({ name: 'password', label: 'Password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}
-        <button class="btn primary lg" type="submit">Create admin and continue</button>
+        <button class="btn primary lg" type="submit">Create super admin and continue</button>
       </form>`),
     bind() {
       mountStage();
@@ -150,7 +157,7 @@ function viewSetup() {
         try {
           await S.setupAdmin({ name: v.name.trim(), empNo: v.empNo.trim().toUpperCase(), phone: v.phone.replace(/\D/g, '').slice(-10), username: v.username, designation: 'Administrator' }, v.password);
         } catch (err) { btn.classList.remove('busy'); return toast(err.message, 'bad', 5000); }
-        toast('Admin account created');
+        toast('Super admin created');
         location.hash = '#/admin'; go();
       };
     }
@@ -200,7 +207,7 @@ function viewLogin() {
         const btn = e.target.querySelector('button[type=submit]'); btn.classList.add('busy');
         try {
           ME = await S.login(v.username, v.password);
-          location.hash = ME.user.role === 'admin' ? '#/admin' : '#/home';
+          location.hash = isAdmin(ME.user) ? '#/admin' : '#/home';
           go();
         } catch (err) {
           btn.classList.remove('busy');
@@ -315,8 +322,8 @@ route(/^\/new$/, async () => {
         <div style="display:grid;gap:16px">
           <div class="panel"><div class="panel-body">
             <div class="field" data-field="photo"><div class="lbl">Driver photo ${s.requirePhotoBeforeScan ? '' : '<small>Optional</small>'}</div>
-              <label class="photo-slot" id="slot"><input type="file" accept="image/*" capture="user" id="photo" class="sr">
-                <div class="ph">${icon('camera')}<b>Take driver photo</b><span>Opens the camera on phones</span></div></label><div class="msg"></div></div>
+              <button type="button" class="photo-slot" id="slot">
+                <div class="ph">${icon('camera')}<b>Take driver photo</b><span>Opens the camera</span></div></button><div class="msg"></div></div>
             <ul class="checklist" id="cl">
               <li data-k="vehicleNo"><i>${icon('check')}</i>Vehicle no.</li>
               <li data-k="transport"><i>${icon('check')}</i>Transport</li>
@@ -363,15 +370,14 @@ route(/^\/new$/, async () => {
         const code = await scanOnce('Scan serial key');
         if (code) { $('#f_serialKey').value = code.trim().toUpperCase(); beep('ok'); tick(); }
       };
-      const onPhoto = async e => {
-        const file = e.target.files[0]; if (!file) return;
-        photo = await compressImage(file, 720, 0.7);
-        $('#slot').innerHTML = `<img src="${photo}" alt="Driver photo"><span class="btn sm retake">${icon('camera')} Retake</span><input type="file" accept="image/*" capture="user" id="photo" class="sr">`;
-        $('#photo').onchange = onPhoto;
+      $('#slot').onclick = async () => {
+        const shot = await takePhoto('Driver photo');
+        if (!shot) return;
+        photo = shot;
+        $('#slot').innerHTML = `<img src="${photo}" alt="Driver photo"><span class="btn sm retake">${icon('camera')} Retake</span>`;
         $('#slot').classList.remove('err');
         tick();
       };
-      $('#photo').onchange = onPhoto;
       f.onsubmit = async e => {
         e.preventDefault();
         const v = val();
@@ -402,7 +408,7 @@ route(/^\/scan\/(\w+)$/, async id => {
   const d = await S.getDispatch(id);
   if (!d) return location.replace('#/');
   if (d.status !== 'open') return location.replace(`#/list/${id}`);
-  if (ME.user.role !== 'admin' && d.createdBy !== ME.user.id) { toast('This list belongs to another employee', 'bad'); return location.replace('#/home'); }
+  if (!isAdmin(ME.user) && d.createdBy !== ME.user.id) { toast('This list belongs to another employee', 'bad'); return location.replace('#/home'); }
   let cam = null;
 
   const tile = (b, isNew) => `<button class="lbl-tile${isNew ? ' new' : ''}" data-key="${esc(b.key)}" data-seq="${b.seq}">
@@ -432,11 +438,11 @@ route(/^\/scan\/(\w+)$/, async id => {
       <section class="dock">
         <div class="scanbar">
           <form class="scanfield" id="sf" autocomplete="off">
-            <div class="wrap live">${icon('scan')}<input class="input" id="scan" placeholder="Scan master box label" aria-label="Scan master box label" autofocus spellcheck="false"></div>
+            <div class="wrap live">${icon('scan')}<input class="input" id="scan" placeholder="Scan master box label" aria-label="Scan master box label" ${TOUCH ? 'inputmode="none"' : 'autofocus'} spellcheck="false"></div>
             <button type="button" class="btn dark" id="camBtn">${icon('camera')}<span>Camera</span></button>
           </form>
           <div id="cam" hidden></div>
-          <div class="status-line" id="st"><span class="dot"></span><span>Ready. Use the barcode gun, or tap Camera on a phone.</span></div>
+          <div class="status-line" id="st"><span class="dot"></span><span>${TOUCH ? 'Starting the camera…' : 'Ready. Scan with the barcode gun, or tap Camera.'}</span></div>
         </div>
         <div class="tray">
           <div class="tray-head"><span>Loaded on this vehicle</span><span id="last">${d.boxes.length ? 'Last scan ' + fmt.time(d.boxes.at(-1).scannedAt) : ''}</span></div>
@@ -449,9 +455,8 @@ route(/^\/scan\/(\w+)$/, async id => {
  |___________|/</pre><b>No boxes yet</b>Each scanned label lands here. Scanning the same box twice is blocked.</div>
         </div>
         <div class="closebar">
-          <button class="btn ghost" id="test" title="Adds a sample label — for training">${icon('play')} Test label</button>
           <span class="grow"></span>
-          <a class="btn" href="${ME.user.role === 'admin' ? '#/admin/lists' : '#/home'}">Save and exit</a>
+          <a class="btn" href="${isAdmin(ME.user) ? '#/admin/lists' : '#/home'}">Save and exit</a>
           <button class="btn primary" id="close">${icon('check')} Close list</button>
         </div>
       </section></div>`),
@@ -523,16 +528,26 @@ route(/^\/scan\/(\w+)$/, async id => {
       document.addEventListener('keydown', refocus);
       cleanup.push(() => document.removeEventListener('keydown', refocus));
 
-      $('#test').onclick = () => add(sampleLabel(Math.floor(Math.random() * 600)), 'test');
 
-      $('#camBtn').onclick = async () => {
-        if (cam) { await cam.stop(); cam = null; $('#cam').hidden = true; $('#camBtn').innerHTML = `${icon('camera')}<span>Camera</span>`; return; }
+      const openCam = async () => {
         $('#cam').hidden = false;
         $('#cam').innerHTML = `<div class="camera"><div id="reader"></div><div class="frame"></div></div>`;
         $('#camBtn').innerHTML = `${icon('x')}<span>Stop</span>`;
-        try { cam = await startCamera('reader', code => add(code, 'camera')); say('Camera on. Hold each label inside the frame.'); }
-        catch (err) { $('#cam').hidden = true; $('#camBtn').innerHTML = `${icon('camera')}<span>Camera</span>`; say('Camera unavailable — ' + esc(err?.message || 'permission denied') + '. Use the barcode gun or type the box number.', 'bad'); }
+        try {
+          cam = await startCamera('reader', code => {
+            const box = $('#cam .camera'); box?.classList.remove('hit'); void box?.offsetWidth; box?.classList.add('hit');
+            add(code, 'camera');
+          });
+          say('Camera is on. Point it at each box label — it beeps when a box is captured.');
+        }
+        catch (err) { $('#cam').hidden = true; $('#camBtn').innerHTML = `${icon('camera')}<span>Camera</span>`; say('Camera unavailable — ' + esc(err?.message || 'permission denied') + '. Allow the camera in the browser settings, or use the barcode gun.', 'bad'); }
       };
+      $('#camBtn').onclick = async () => {
+        if (cam) { await cam.stop(); cam = null; $('#cam').hidden = true; $('#camBtn').innerHTML = `${icon('camera')}<span>Camera</span>`; say('Camera off. Use the barcode gun, or tap Camera.'); return; }
+        openCam();
+      };
+      // Phones and tablets: start scanning with the camera straight away.
+      if (TOUCH) openCam();
       cleanup.push(() => cam?.stop());
 
       $('#tray').onclick = e => {
@@ -595,7 +610,7 @@ function boxDrawer(b, d, onRemove) {
 route(/^\/list\/(\w+)$/, async id => {
   const d = await S.getDispatch(id);
   if (!d) return location.replace('#/');
-  const admin = ME.user.role === 'admin';
+  const admin = isAdmin(ME.user);
   if (!admin && d.createdBy !== ME.user.id) return location.replace('#/home');
   const s = SETTINGS;
   const rows = d.boxes.map(b => `<tr class="link" data-k="${esc(b.key)}"><td class="num mute">${b.seq}</td><td class="code">${esc(b.boxNo || b.raw)}</td><td class="hide-sm">${esc(b.item || '—')}</td><td class="num hide-sm">${b.qty ?? '—'}</td><td class="num">${b.weight != null ? fmtW(b.weight) : '—'}</td><td class="hide-sm code mute" style="font-weight:500">${esc(b.uid || '—')}</td><td class="num mute">${fmt.time(b.scannedAt)}</td></tr>`).join('');
@@ -607,7 +622,7 @@ route(/^\/list\/(\w+)$/, async id => {
         <div class="actions">
           ${d.status === 'open' ? `<a class="btn primary" href="#/scan/${d.id}">${icon('scan')} Continue scanning</a>` : ''}
           ${admin && d.status === 'closed' ? `<button class="btn" data-reopen>${icon('undo')} Reopen</button>` : ''}
-          ${admin ? `<button class="btn danger icon" data-del title="Delete list" aria-label="Delete list">${icon('trash')}</button>` : ''}
+          ${isSuper(ME.user) ? `<button class="btn danger icon" data-del title="Delete list" aria-label="Delete list">${icon('trash')}</button>` : ''}
         </div></div>
       <div class="detail">
         <div class="panel">
@@ -824,17 +839,22 @@ route(/^\/admin\/people$/, async () => {
         const q = $('#q').value.trim().toLowerCase();
         const list = people.filter(p => !q || [p.name, p.empNo, p.phone, p.username].some(v => String(v || '').toLowerCase().includes(q)));
         $('#rows').innerHTML = list.map(p => { const st = stats(p.id); return `<tr class="link" data-id="${p.id}">
-          <td><div class="person"><div class="avatar">${initials(p.name)}</div><div><b>${esc(p.name)}</b><span>${esc(p.empNo)} · ${esc(p.designation || (p.role === 'admin' ? 'Administrator' : 'Employee'))}</span></div></div></td>
+          <td><div class="person"><div class="avatar">${initials(p.name)}</div><div><b>${esc(p.name)}</b><span>${esc(p.empNo)} · ${esc(p.designation || ROLE_NAME[p.role])}</span></div></div></td>
           <td class="hide-sm">${esc(p.phone)}</td>
           <td class="hide-sm">${fmt.date(p.createdAt)}<div class="mute" style="font-size:12.5px">by ${esc(p.createdByName)}</div></td>
           <td class="hide-sm">${p.lastLogin ? fmt.ago(p.lastLogin) : '<span class="mute">Never</span>'}</td>
           <td class="num"><b>${fmt.num(st.boxes)}</b><div class="mute" style="font-size:12.5px">${st.lists} lists</div></td>
-          <td>${p.role === 'admin' ? '<span class="pill admin">Admin</span>' : p.active ? '<span class="pill closed">Active</span>' : '<span class="pill off">Disabled</span>'}</td></tr>`; }).join('')
+          <td>${!p.active ? '<span class="pill off">Disabled</span>' : p.role === 'super' ? '<span class="pill admin">Super admin</span>' : p.role === 'admin' ? '<span class="pill open">Admin</span>' : p.active ? '<span class="pill closed">Active</span>' : '<span class="pill off">Disabled</span>'}</td></tr>`; }).join('')
           || `<tr><td colspan="6"><div class="empty"><b>No one found</b>Try another name or number.</div></td></tr>`;
       };
       $('#q').oninput = draw;
       $('#add').onclick = () => personDrawer(null);
-      $('#rows').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) personDrawer(people.find(p => p.id === tr.dataset.id)); };
+      $('#rows').onclick = e => {
+        const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+        const p = people.find(x => x.id === tr.dataset.id);
+        if (isAdmin(p) && !isSuper(ME.user) && p.id !== ME.user.id) return toast('Only the super admin can change admin accounts', 'bad');
+        personDrawer(p);
+      };
       draw();
     }
   });
@@ -862,7 +882,9 @@ function personDrawer(p) {
         ${field({ name: 'designation', label: 'Designation', value: p.designation, attrs: 'list="desig"' })}
         <datalist id="desig"><option>Loader</option><option>Dispatch Supervisor</option><option>Store Assistant</option><option>Security</option><option>Contract Worker</option></datalist>
         ${field({ name: 'joinDate', label: 'Joining date', type: 'date', value: p.joinDate, opt: true, attrs: `max="${today}"` })}
-        ${field({ name: 'role', label: 'Access', value: p.role, options: [['employee', 'Employee — scan and own lists'], ['admin', 'Admin — everything']], attrs: self ? 'disabled' : '' })}
+        ${field({ name: 'role', label: 'Access', value: p.role, options: isSuper(ME.user)
+          ? [['employee', 'Employee — scan and own lists'], ['admin', 'Admin — sees everything, manages employees'], ['super', 'Super admin — full control']]
+          : [['employee', 'Employee — scan and own lists']].concat(isAdmin(p) ? [[p.role, ROLE_NAME[p.role]]] : []), attrs: self || !isSuper(ME.user) ? 'disabled' : '' })}
       </div></div>
       <div class="fgroup"><h3>Emergency contact</h3><div class="grid2">
         ${field({ name: 'emName', label: 'Name', value: p.emName, opt: true })}
@@ -906,7 +928,8 @@ function personDrawer(p) {
         if (!setErrors(f, errs)) return;
         const btn = e.currentTarget; btn.classList.add('busy');
         const data = { ...p, ...v, name: v.name.trim().replace(/\s+/g, ' '), empNo: v.empNo.trim().toUpperCase(), address: v.address.trim() };
-        delete data.password; if (self) data.role = 'admin';
+        delete data.password;
+        if (self || !isSuper(ME.user)) data.role = p.role || 'employee';
         try {
           await S.saveUser(data, ME.user, isNew ? v.password : null);
           close();
@@ -1038,7 +1061,7 @@ route(/^\/admin\/settings$/, async () => {
       };
     }
   });
-}, { admin: true });
+}, { super: true });
 
 // ---------- boot ----------
 const hideBoot = () => { const b = $('#boot'); if (!b) return; setTimeout(() => { b.classList.add('gone'); clearInterval(window.__boot); setTimeout(() => b.remove(), 450); }, 350); };
