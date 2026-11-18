@@ -2,6 +2,7 @@
 // Handles: a bare box number ("4270036177-3"), JSON, and "Key: value"
 // text in any delimiter (new lines, |, ;, tabs) — the fields printed on
 // Yuken master-box labels.
+import { weightNumber } from './common.js';
 
 const FIELDS = [
   ['boxNo',       /^(ps\s*)?box\s*(num(ber)?|no\.?)?$|^packing\s*slip|^ps\s*no|^box$/i],
@@ -34,8 +35,7 @@ function finish(rec, raw) {
     if (m) { rec.packingSlip = m[1]; rec.boxIndex = m[2]; }
   }
   if (rec.weight != null) {
-    const w = parseFloat(String(rec.weight).replace(',', '.').replace(/[^\d.]/g, ''));
-    rec.weight = isNaN(w) ? null : w;
+    rec.weight = weightNumber(rec.weight);
   }
   if (rec.qty != null) {
     const q = parseInt(String(rec.qty).replace(/\D/g, ''), 10);

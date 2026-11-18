@@ -22,9 +22,30 @@ export const sameBox = (a, b) => a.key === b.key || (a.uid && up(a.uid) === up(b
 // Every identity a box can be recognised by, for the cross-list index.
 export const boxIds = b => [...new Set([b.uid, b.boxNo, b.key].filter(Boolean).map(up))];
 
+// Accept both decimal-comma labels ("12,5") and grouped values
+// ("1,234.5" / "1.234,5") without silently dropping most of the weight.
+export function weightNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  let s = String(value ?? '').trim().replace(/[^\d,.-]/g, '');
+  if (!s || !/\d/.test(s)) return null;
+  const comma = s.lastIndexOf(','), dot = s.lastIndexOf('.');
+  if (comma >= 0 && dot >= 0) {
+    const decimal = comma > dot ? ',' : '.';
+    s = s.replace(decimal === ',' ? /\./g : /,/g, '').replace(decimal, '.');
+  } else if (comma >= 0) {
+    const decimals = s.length - comma - 1;
+    s = decimals > 0 && decimals <= 2 ? s.replace(',', '.') : s.replace(/,/g, '');
+  } else if ((s.match(/\./g) || []).length > 1) {
+    const last = s.lastIndexOf('.');
+    s = s.slice(0, last).replace(/\./g, '') + s.slice(last);
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function totals(d) {
   d.totalBoxes = d.boxes.length;
-  d.labelWeight = +d.boxes.reduce((s, b) => s + (Number(b.weight) || 0), 0).toFixed(2);
+  d.labelWeight = +d.boxes.reduce((s, b) => s + (weightNumber(b.weight) || 0), 0).toFixed(2);
   d.totalWeight = d.weightEntered ?? d.labelWeight;
   return d;
 }

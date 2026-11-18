@@ -180,6 +180,12 @@ export async function removeBox(d, box, user) {
 }
 
 export async function closeDispatch(d, user, extra = {}) {
+  // Recompute from the saved box records at the point of closing so the
+  // manifest total always includes every scanned label weight.
+  const fresh = await db.get('dispatches', d.id);
+  if (fresh) Object.assign(d, fresh);
+  delete d.weightEntered;
+  totals(d);
   Object.assign(d, extra, { status: 'closed', closedAt: Date.now(), closedBy: user.name });
   await save(d);
   await log(user, 'list.close', `${d.code} · ${d.boxes.length} boxes`);
