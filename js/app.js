@@ -508,16 +508,27 @@ route(/^\/scan\/(\w+)$/, async id => {
       // A barcode gun types the code and presses Enter. QR labels with several
       // lines arrive as several Enters in quick succession, so wait a moment
       // before treating Enter as "done" and keep the lines together.
-      let buf = '', timer = null;
-      const commit = () => { timer = null; const v = (buf + input.value).trim(); buf = ''; input.value = ''; if (v) add(v, 'scanner'); };
+      let buf = '', timer = null, start = 0, idle = null;
+      const commit = () => { timer = null; start = 0; const v = (buf + input.value).trim(); buf = ''; input.value = ''; if (v) add(v, 'scanner'); };
       $('#sf').onsubmit = e => e.preventDefault();
       input.addEventListener('keydown', e => {
-        if (e.key !== 'Enter') { if (timer) { clearTimeout(timer); timer = setTimeout(commit, 140); } return; }
+        if (e.key !== 'Enter' && e.key !== 'Tab') { if (timer) { clearTimeout(timer); timer = setTimeout(commit, 140); } return; }
         e.preventDefault();
         buf += input.value + '\n'; input.value = '';
         clearTimeout(timer); timer = setTimeout(commit, 140);
       });
-      cleanup.push(() => clearTimeout(timer));
+      // Some scanners and phone scanner apps type the code without pressing
+      // Enter, so codes piled up in the field. Text that arrives at scanner
+      // speed (or is pasted) is added on its own after a short pause.
+      input.addEventListener('input', e => {
+        const now = performance.now(), len = input.value.length;
+        clearTimeout(idle);
+        if (!len) { start = 0; return; }
+        if (!start) start = now;
+        const fast = e.inputType === 'insertFromPaste' || (len >= 4 && (now - start) / len < 40);
+        if (fast) idle = setTimeout(() => { if (!timer && input.value.trim()) commit(); }, 220);
+      });
+      cleanup.push(() => { clearTimeout(timer); clearTimeout(idle); });
       // Keep the barcode gun working even if focus wandered off the field.
       const refocus = e => {
         if (document.querySelector('.drawer, .dialog')) return;
