@@ -4,12 +4,25 @@ import { $, $$, esc, fmt, initials, validate, normVehicle, prettyVehicle, compre
 import { icon, brand, toast, drawer, confirmBox, formDialog, field, setErrors, formData } from './ui.js';
 import { startCamera, scanOnce, loadScript, takePhoto } from './camera.js';
 import * as X from './export.js';
+import { googleOn, googleProfile, driveBackup, driveList } from './google.js';
 
 const app = $('#app');
 const TOUCH = matchMedia('(pointer: coarse)').matches;
-const isAdmin = u => u?.role === 'admin' || u?.role === 'super';
-const isSuper = u => u?.role === 'super';
-const ROLE_NAME = { super: 'Super admin', admin: 'Admin', employee: 'Employee' };
+const isAdmin = u => u?.role === 'manager' || u?.role === 'super';   // sees everything
+const isSuper = u => u?.role === 'super';                            // changes everything
+const ROLE_NAME = { super: 'Admin', manager: 'Manager', employee: 'Employee' };
+
+// ---------- light / dark ----------
+const theme = () => document.documentElement.dataset.theme || 'dark';
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('yk.theme', t); } catch { /* private mode */ }
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', t === 'light' ? '#F3F6FA' : '#070F1D');
+  $$('[data-theme-btn]').forEach(b => { b.innerHTML = themeIcon(); b.title = b.ariaLabel = t === 'light' ? 'Switch to dark mode' : 'Switch to light mode'; });
+}
+const themeIcon = () => icon(theme() === 'light' ? 'moon' : 'sun');
+const themeBtn = (cls = 'btn ghost icon sm') => `<button class="${cls}" data-theme-btn type="button" title="${theme() === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}" aria-label="Switch theme">${themeIcon()}</button>`;
+document.addEventListener('click', e => { if (e.target.closest('[data-theme-btn]')) setTheme(theme() === 'light' ? 'dark' : 'light'); });
 document.addEventListener('pointerdown', unlockAudio, { capture: true });
 let ME = null;        // { user, session }
 let SETTINGS = null;
@@ -30,6 +43,7 @@ async function go() {
 async function route_() {
   for (const fn of cleanup.splice(0)) { try { await fn(); } catch { /* ignore */ } }
   const hash = location.hash.slice(1) || '/';
+  await S.init();
   SETTINGS = await S.getSettings();
 
   if (!(await S.hasAdmin())) return render(viewSetup());
@@ -41,7 +55,7 @@ async function route_() {
     const m = hash.match(r.re);
     if (!m) continue;
     if (r.admin && !isAdmin(ME.user)) break;
-    if (r.super && !isSuper(ME.user)) { toast('Only the super admin can open this page', 'bad'); break; }
+    if (r.super && !isSuper(ME.user)) { toast('Only Chetan (admin) can open Settings', 'bad'); break; }
     try { return await r.fn(...m.slice(1)); }
     catch (err) {
       console.error(err);
@@ -70,10 +84,10 @@ window.addEventListener('hashchange', go);
 
 // ---------- shells ----------
 const NAV_ADMIN = [
-  ['#/admin', 'grid', 'Overview'],
+  ['#/admin', 'grid', 'Dashboard'],
   ['#/new', 'scan', 'New list'],
-  ['#/admin/lists', 'list', 'Dispatch lists'],
-  ['#/admin/people', 'users', 'Employees'],
+  ['#/admin/lists', 'list', 'Lists'],
+  ['#/admin/people', 'users', 'People'],
   ['#/admin/activity', 'activity', 'Activity'],
   ['#/admin/settings', 'cog', 'Settings']
 ];
@@ -82,15 +96,16 @@ const clockHTML = () => `<div class="clock"><b data-clock>${fmt.time(Date.now())
 setInterval(() => $$('[data-clock]').forEach(el => { el.textContent = fmt.time(Date.now()); }), 15000);
 
 function adminShell(active, content) {
-  const items = NAV_ADMIN.filter(n => n[0] !== '#/admin/settings' || isSuper(ME.user));
+  // Managers look, never change: no Settings, no New list.
+  const items = NAV_ADMIN.filter(n => isSuper(ME.user) || !['#/admin/settings', '#/new'].includes(n[0]));
   const nav = items.map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t}</span></a>`).join('');
   return `<div class="shell">
     <aside class="side">${brand()}<nav class="nav">${nav}</nav><div class="grow"></div>
       ${clockHTML()}
-      <div class="me"><div class="avatar">${initials(ME.user.name)}</div><div><b>${esc(ME.user.name)}</b><span>${ROLE_NAME[ME.user.role]} · ${esc(ME.user.empNo)}</span></div>
-      <button class="btn ghost icon sm" data-logout title="Sign out" aria-label="Sign out">${icon('logout')}</button></div></aside>
-    <div>${content}</div>
-    <nav class="tabbar">${items.filter(n => n[0] !== '#/admin/activity').map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t.split(' ')[0]}</span></a>`).join('')}</nav>
+      <div class="me"><button class="me-btn" data-account title="My account"><div class="avatar">${initials(ME.user.name)}</div><div><b>${esc(ME.user.name)}</b><span>${ROLE_NAME[ME.user.role]} · ${esc(ME.user.empNo)}</span></div></button>
+      ${themeBtn()}<button class="btn ghost icon sm" data-logout title="Sign out" aria-label="Sign out">${icon('logout')}</button></div></aside>
+    <div><header class="mtop">${brand()}<span class="grow"></span>${themeBtn()}<button class="avatar sm" data-account aria-label="My account">${initials(ME.user.name)}</button></header>${content}</div>
+    <nav class="tabbar">${items.filter(n => !['#/admin/activity', '#/admin/settings'].includes(n[0]) || (n[0] === '#/admin/activity' && !isSuper(ME.user))).map(([h, i, t]) => `<a href="${h}" class="${active === h ? 'on' : ''}">${icon(i)}<span>${t}</span></a>`).join('')}${isSuper(ME.user) ? `<a href="#/admin/settings" class="${active === '#/admin/settings' || active === '#/admin/activity' ? 'on' : ''}">${icon('cog')}<span>More</span></a>` : ''}</nav>
   </div>`;
 }
 
@@ -100,7 +115,7 @@ function topbar(back) {
     ${back ? `<a class="btn ghost icon" href="${back}" aria-label="Back">${icon('back')}</a>` : ''}
     ${brand()}
     <div class="who"><div><b>${esc(u.name)}</b><span>Emp. ${esc(u.empNo)} · signed in ${fmt.time(ME.session.loginAt)}</span></div>
-      <div class="avatar">${initials(u.name)}</div>
+      ${themeBtn('btn ghost icon')}<button class="avatar" data-account aria-label="My account">${initials(u.name)}</button>
       <button class="btn ghost icon" data-logout title="Sign out" aria-label="Sign out">${icon('logout')}</button></div>
   </header>`;
 }
@@ -109,6 +124,7 @@ function topbar(back) {
 const frame = (active, content, back) => isAdmin(ME.user) ? adminShell(active, content) : `<div class="shell solo"><div>${topbar(back)}${content}</div></div>`;
 
 document.addEventListener('click', async e => {
+  if (e.target.closest('[data-account]') && ME) return accountDrawer();
   if (e.target.closest('[data-logout]')) {
     if (!(await confirmBox({ title: 'Sign out?', text: 'Open lists stay saved. The next person can sign in on this computer.', ok: 'Sign out' }))) return;
     await S.logout(ME?.user); ME = null; location.hash = '#/login'; go();
@@ -120,7 +136,7 @@ function stage(formHTML) {
   return `<div class="login">
     <section class="login-art" id="hero" aria-hidden="true">
       <div class="veil"></div>
-      <div class="top">${brand(true)}</div>
+      <div class="top">${brand(true)}${themeBtn('btn ghost icon theme-float')}</div>
       <div class="stamp"><div><strong>Every box, accounted for.</strong><p>Scan master-box labels straight into the vehicle's loading list.</p></div><div class="readout" id="readout"></div></div>
     </section>
     <section class="login-form">${formHTML}</section></div>`;
@@ -133,20 +149,33 @@ function mountStage() {
 function viewSetup() {
   return {
     html: stage(`
-      <h1>Create the super admin</h1>
-      <p>The super admin (for example Chetan) controls everything: other admins, employees, settings and the master PIN. This runs once.</p>
+      <h1>Set up the admin account</h1>
+      <p>This is Chetan's account. It controls everything: managers, employees, the activity log, settings and backups. You do this once.</p>
+      ${googleOn() ? `<button type="button" class="btn lg google" id="g">${icon('google')} Fill in with Google</button><p class="or">or type the details</p>` : ''}
       <form id="f" novalidate>
         <div class="grid2">
           ${field({ name: 'name', label: 'Full name', attrs: 'autocomplete="name"' })}
           ${field({ name: 'empNo', label: 'Employee no.', cls: 'code' })}
         </div>
         ${field({ name: 'phone', label: 'Mobile number', type: 'tel', attrs: 'inputmode="numeric" maxlength="10"' })}
-        ${field({ name: 'username', label: 'Username', attrs: 'autocapitalize="none" autocomplete="username"', hint: 'Used to sign in, e.g. admin' })}
-        ${field({ name: 'password', label: 'Password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}
-        <button class="btn primary lg" type="submit">Create super admin and continue</button>
+        ${field({ name: 'username', label: 'Username', attrs: 'autocapitalize="none" autocomplete="username"', hint: 'Used to sign in, e.g. chetan' })}
+        ${field({ name: 'password', label: 'Password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number. You use this every time after today.' })}
+        <input type="hidden" name="googleEmail">
+        <div class="linked" id="linked" hidden></div>
+        <button class="btn primary lg" type="submit">Create admin account</button>
       </form>`),
     bind() {
       mountStage();
+      $('#g')?.addEventListener('click', async () => {
+        try {
+          const g = await googleProfile();
+          const f = $('#f');
+          f.googleEmail.value = g.email;
+          if (!f.name.value) f.name.value = g.name || '';
+          if (!f.username.value) f.username.value = g.email.split('@')[0].toLowerCase().replace(/[^a-z0-9._]/g, '');
+          $('#linked').hidden = false; $('#linked').innerHTML = `${icon('check')} Google account <b>${esc(g.email)}</b> will be linked. Next time you can also sign in with Google.`;
+        } catch (err) { toast(err.message, 'bad', 5000); }
+      });
       $('#f').onsubmit = async e => {
         e.preventDefault();
         const v = formData(e.target);
@@ -155,9 +184,9 @@ function viewSetup() {
         if (!setErrors(e.target, errs)) return;
         const btn = e.target.querySelector('button[type=submit]'); btn.classList.add('busy');
         try {
-          await S.setupAdmin({ name: v.name.trim(), empNo: v.empNo.trim().toUpperCase(), phone: v.phone.replace(/\D/g, '').slice(-10), username: v.username, designation: 'Administrator' }, v.password);
+          await S.setupAdmin({ name: v.name.trim(), empNo: v.empNo.trim().toUpperCase(), phone: v.phone.replace(/\D/g, '').slice(-10), username: v.username, designation: 'Administrator', googleEmail: v.googleEmail ? v.googleEmail.toLowerCase() : null }, v.password);
         } catch (err) { btn.classList.remove('busy'); return toast(err.message, 'bad', 5000); }
-        toast('Super admin created');
+        toast('Admin account created. You stay signed in until you press Sign out.', 'ok', 5000);
         location.hash = '#/admin'; go();
       };
     }
@@ -168,8 +197,13 @@ function viewSetup() {
 function viewLogin() {
   return {
     html: stage(`
-      <h1>Sign in to start loading</h1>
-      <p>Use the username or employee number your admin gave you.</p>
+      <div class="seg" role="tablist" id="who">
+        <button type="button" role="tab" class="on" data-who="staff">Employee</button>
+        <button type="button" role="tab" data-who="boss">Manager or admin</button>
+      </div>
+      <h1 id="lh">Sign in to start loading</h1>
+      <p id="lp">Use the username or employee number Chetan gave you.</p>
+      <div id="gbox" hidden>${googleOn() ? `<button type="button" class="btn lg google" id="g">${icon('google')} Sign in with Google</button><p class="or">or use your password</p>` : ''}</div>
       <form id="f" novalidate>
         ${field({ name: 'username', label: 'Username or employee no.', attrs: 'autocapitalize="none" autocomplete="username" autofocus' })}
         <div class="field" data-field="password"><label for="pw">Password</label>
@@ -182,6 +216,20 @@ function viewLogin() {
       <p class="login-foot">${esc(SETTINGS.company)} · ${esc(SETTINGS.docTitle)}${SETTINGS.plant ? ' · ' + esc(SETTINGS.plant) : ''}</p>`),
     bind() {
       mountStage();
+      const who = w => {
+        $$('#who button').forEach(b => b.classList.toggle('on', b.dataset.who === w));
+        $('#lh').textContent = w === 'boss' ? 'Manager and admin sign-in' : 'Sign in to start loading';
+        $('#lp').textContent = w === 'boss' ? 'You stay signed in on this device until you press Sign out.' : 'Use the username or employee number Chetan gave you.';
+        $('#gbox').hidden = w !== 'boss';
+        try { localStorage.setItem('yk.who', w); } catch { /* ignore */ }
+      };
+      $$('#who button').forEach(b => b.onclick = () => who(b.dataset.who));
+      who(localStorage.getItem('yk.who') || 'staff');
+      $('#g')?.addEventListener('click', async e => {
+        const btn = e.currentTarget; btn.classList.add('busy');
+        try { const g = await googleProfile(); ME = await S.loginGoogle(g.email); location.hash = isAdmin(ME.user) ? '#/admin' : '#/home'; go(); }
+        catch (err) { btn.classList.remove('busy'); $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`; }
+      });
       $('[data-eye]').onclick = e => {
         const i = $('#pw'); const show = i.type === 'password';
         i.type = show ? 'text' : 'password';
@@ -189,7 +237,7 @@ function viewLogin() {
       };
       $('#forgot').onclick = () => formDialog({
         title: 'Reset a password',
-        text: 'The master PIN is held by the person responsible for this computer. It can reset any account, including the admin.',
+        text: 'Chetan keeps the master PIN. It can reset anyone\'s password, including his own.',
         body: `${field({ name: 'login', label: 'Username or employee no.', value: $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
           ${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
           ${field({ name: 'next', label: 'New password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}`,
@@ -293,6 +341,7 @@ function listCard(d) {
 // New list — header details before scanning
 // ======================================================================
 route(/^\/new$/, async () => {
+  if (ME.user.role === 'manager') { toast('Managers can view lists but not start them', 'bad'); return location.replace('#/admin'); }
   const s = SETTINGS;
   let photo = null;
   const transports = [['', 'Select transport'], ...s.transporters.map(t => [t, t]), ['__other', 'Other — type the name']];
@@ -307,11 +356,8 @@ route(/^\/new$/, async () => {
             ${field({ name: 'transport', label: 'Transport name', options: transports })}
             <div class="field span" data-field="transportOther" hidden><label for="f_transportOther">Transport name</label><input class="input" id="f_transportOther" name="transportOther"><div class="msg"></div></div>
           </div></div>
-          <div class="fgroup"><h3>Dispatch</h3><div class="grid2">
-            <div class="field" data-field="serialKey"><label for="f_serialKey">Serial key</label>
-              <div class="inline"><input class="input code" id="f_serialKey" name="serialKey" autocomplete="off" placeholder="Scan or type">
-              <button type="button" class="btn icon" data-scan-serial title="Scan serial key" aria-label="Scan serial key">${icon('camera')}</button></div><div class="msg"></div></div>
-            ${field({ name: 'location', label: 'Location', options: locations })}
+          <div class="fgroup"><h3>Loading point</h3><div class="grid2">
+            ${field({ name: 'location', label: 'Location', options: locations, span: true })}
             <div class="field span" data-field="locationOther" hidden><label for="f_locationOther">Location</label><input class="input" id="f_locationOther" name="locationOther"><div class="msg"></div></div>
           </div></div>
           <div class="fgroup" style="margin-bottom:0"><h3>Driver</h3><div class="grid2">
@@ -327,7 +373,6 @@ route(/^\/new$/, async () => {
             <ul class="checklist" id="cl">
               <li data-k="vehicleNo"><i>${icon('check')}</i>Vehicle no.</li>
               <li data-k="transport"><i>${icon('check')}</i>Transport</li>
-              <li data-k="serialKey"><i>${icon('check')}</i>Serial key</li>
               <li data-k="location"><i>${icon('check')}</i>Location</li>
               <li data-k="driverName"><i>${icon('check')}</i>Driver name</li>
               ${s.requirePhotoBeforeScan ? `<li data-k="photo"><i>${icon('check')}</i>Driver photo</li>` : ''}
@@ -344,7 +389,6 @@ route(/^\/new$/, async () => {
         return {
           vehicleNo: normVehicle(v.vehicleNo),
           transport: v.transport === '__other' ? (v.transportOther || '').trim() : v.transport,
-          serialKey: (v.serialKey || '').trim().toUpperCase(),
           location: v.location === '__other' ? (v.locationOther || '').trim() : v.location,
           driverName: (v.driverName || '').trim(),
           driverPhone: (v.driverPhone || '').replace(/\D/g, '').slice(-10)
@@ -366,10 +410,6 @@ route(/^\/new$/, async () => {
         if (show) $('#f_' + box).focus();
       });
       other('transport', 'transportOther'); other('location', 'locationOther');
-      $('[data-scan-serial]').onclick = async () => {
-        const code = await scanOnce('Scan serial key');
-        if (code) { $('#f_serialKey').value = code.trim().toUpperCase(); beep('ok'); tick(); }
-      };
       $('#slot').onclick = async () => {
         const shot = await takePhoto('Driver photo');
         if (!shot) return;
@@ -385,7 +425,6 @@ route(/^\/new$/, async () => {
           vehicleNo: validate.vehicle(v.vehicleNo),
           transport: f.transport.value === '__other' ? '' : validate.required(v.transport),
           transportOther: f.transport.value === '__other' ? validate.required(v.transport) : '',
-          serialKey: validate.required(v.serialKey),
           location: f.location.value === '__other' ? '' : validate.required(v.location),
           locationOther: f.location.value === '__other' ? validate.required(v.location) : '',
           driverName: validate.required(v.driverName),
@@ -408,7 +447,7 @@ route(/^\/scan\/(\w+)$/, async id => {
   const d = await S.getDispatch(id);
   if (!d) return location.replace('#/');
   if (d.status !== 'open') return location.replace(`#/list/${id}`);
-  if (!isAdmin(ME.user) && d.createdBy !== ME.user.id) { toast('This list belongs to another employee', 'bad'); return location.replace('#/home'); }
+  if (!isSuper(ME.user) && d.createdBy !== ME.user.id) { toast('Only the person loading this list (or Chetan) can scan into it', 'bad'); return location.replace(`#/list/${id}`); }
   let cam = null;
 
   const tile = (b, isNew) => `<button class="lbl-tile${isNew ? ' new' : ''}" data-key="${esc(b.key)}" data-seq="${b.seq}">
@@ -426,7 +465,7 @@ route(/^\/scan\/(\w+)$/, async id => {
         <dl>
           <dt>List</dt><dd class="code">${esc(d.code)}</dd>
           <dt>Transport</dt><dd>${esc(d.transport)}</dd>
-          <dt>Serial key</dt><dd class="code">${esc(d.serialKey)}</dd>
+          ${d.serialKey ? `<dt>Serial key</dt><dd class="code">${esc(d.serialKey)}</dd>` : ''}
           <dt>Location</dt><dd>${esc(d.location)}</dd>
           <dt>Employee</dt><dd>${esc(d.empName)} · ${esc(d.empNo)}</dd>
           <dt>Login time</dt><dd>${fmt.dt(d.loginAt)}</dd>
@@ -512,10 +551,10 @@ route(/^\/scan\/(\w+)$/, async id => {
       const commit = () => { timer = null; start = 0; const v = (buf + input.value).trim(); buf = ''; input.value = ''; if (v) add(v, 'scanner'); };
       $('#sf').onsubmit = e => e.preventDefault();
       input.addEventListener('keydown', e => {
-        if (e.key !== 'Enter' && e.key !== 'Tab') { if (timer) { clearTimeout(timer); timer = setTimeout(commit, 140); } return; }
+        if (e.key !== 'Enter' && e.key !== 'Tab') { if (timer) { clearTimeout(timer); timer = setTimeout(commit, 350); } return; }
         e.preventDefault();
         buf += input.value + '\n'; input.value = '';
-        clearTimeout(timer); timer = setTimeout(commit, 140);
+        clearTimeout(timer); timer = setTimeout(commit, 350);
       });
       // Some scanners and phone scanner apps type the code without pressing
       // Enter, so codes piled up in the field. Text that arrives at scanner
@@ -564,28 +603,29 @@ route(/^\/scan\/(\w+)$/, async id => {
       $('#tray').onclick = e => {
         const t = e.target.closest('.lbl-tile'); if (!t) return;
         const b = d.boxes.find(x => x.key === t.dataset.key);
+        const redraw = () => { $('#tray').innerHTML = tiles(); $('#empty').hidden = d.boxes.length > 0; bump($('#c-box'), d.boxes.length); bump($('#c-wt'), fmtW(d.totalWeight)); };
         boxDrawer(b, d, async () => {
           try { await S.removeBox(d, b, ME.user); } catch (err) { return toast(err.message, 'bad'); }
-          $('#tray').innerHTML = tiles(); $('#empty').hidden = d.boxes.length > 0;
-          bump($('#c-box'), d.boxes.length); bump($('#c-wt'), fmtW(d.totalWeight));
+          redraw();
           say(`Removed ${esc(b.boxNo || b.key)} — numbers updated`, 'dup');
           toast('Box removed');
-        });
+        }, redraw);
       };
 
       $('#close').onclick = async () => {
         if (!d.boxes.length) { say('Scan at least one box before closing the list.', 'bad'); beep('bad'); return; }
         const hasW = d.boxes.some(b => b.weight != null);
+        const noW = d.boxes.filter(b => b.weight == null).length;
         const res = await confirmBox({
           title: 'Close this list?',
-          text: `<b>${d.boxes.length} boxes</b> on <b>${esc(prettyVehicle(d.vehicleNo))}</b>. ${hasW ? 'Total weight from labels is shown below — correct it if the weighbridge says otherwise.' : 'Labels had no weight. Enter the total weight in kg.'}`,
+          text: `<b>${d.boxes.length} boxes</b> on <b>${esc(prettyVehicle(d.vehicleNo))}</b>.<br>${hasW ? `The labels add up to <b>${fmtW(d.labelWeight)} kg</b>.${noW ? ` ${noW} box${noW > 1 ? 'es have' : ' has'} no weight on the label.` : ''} Change the number only if the weighbridge says something else.` : 'The labels had no weight. Type the total weight in kg, or leave it empty.'}`,
           ok: 'Close list',
-          input: { type: 'number', placeholder: 'Total weight (kg)', value: hasW ? d.totalWeight : '' }
+          input: { type: 'number', placeholder: 'Total weight (kg)', value: hasW ? d.labelWeight : '' }
         });
         if (res === false) return;
         const w = parseFloat(res);
         await cam?.stop(); cam = null;
-        await S.closeDispatch(d, ME.user, { weightEntered: isNaN(w) || w === d.totalWeight ? null : w });
+        await S.closeDispatch(d, ME.user, { weightEntered: isNaN(w) || Math.abs(w - d.labelWeight) < 0.005 ? null : w });
         toast(`${d.code} closed`);
         sessionStorage.setItem('yk.preview', d.id);
         location.hash = `#/list/${d.id}`;
@@ -594,19 +634,29 @@ route(/^\/scan\/(\w+)$/, async id => {
   });
 });
 
-const fmtW = w => (Number(w) || 0).toLocaleString('en-IN', { maximumFractionDigits: 1 });
+const fmtW = w => (Number(w) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
-function boxDrawer(b, d, onRemove) {
+function boxDrawer(b, d, onRemove, onChange) {
   const keys = ['boxNo', 'packingSlip', 'boxIndex', 'item', 'qty', 'weight', 'datePacked', 'customer', 'shipTo', 'transporter', 'uid'];
   const rows = keys.filter(k => b[k] != null && b[k] !== '').map(k => `<dt>${FIELD_LABELS[k]}</dt><dd class="${['boxNo', 'uid', 'item'].includes(k) ? 'code' : ''}">${esc(k === 'weight' ? fmt.kg(b[k]) : b[k])}</dd>`).join('');
   const extra = Object.entries(b.extra || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
-  const canEdit = d.status === 'open';
+  // Chetan can fix any list. Employees can fix their own list while it is open.
+  const canEdit = isSuper(ME.user) || (d.status === 'open' && d.createdBy === ME.user.id);
   drawer({
     title: `Box #${b.seq}`,
-    body: `<dl class="kv">${rows}${extra}<dt>Scanned</dt><dd>${fmt.dt(b.scannedAt)}</dd><dt>By</dt><dd>${esc(b.by || d.empName)}</dd><dt>Method</dt><dd>${esc(b.via || '—')}</dd></dl>
+    body: `<dl class="kv">${rows}${extra}<dt>Scanned</dt><dd>${fmt.dt(b.scannedAt)}</dd><dt>By</dt><dd>${esc(b.by || d.empName)}</dd><dt>Method</dt><dd>${esc(b.via || '—')}</dd>${b.weightBy ? `<dt>Weight typed by</dt><dd>${esc(b.weightBy)}</dd>` : ''}</dl>
+      ${canEdit && onChange ? `<form class="wt-edit" id="wf"><label for="wt">${b.weight == null ? 'This label had no weight. Type it here' : 'Wrong weight? Correct it here'}</label>
+        <div class="inline"><input class="input" id="wt" type="number" step="0.01" min="0" inputmode="decimal" placeholder="kg" value="${b.weight ?? ''}"><button class="btn">${icon('check')} Save weight</button></div></form>` : ''}
       <div class="raw">${esc(b.raw)}</div>`,
     foot: canEdit && onRemove ? `<button class="btn danger" data-rm>${icon('trash')} Remove from list</button>` : '',
     onMount(el, close) {
+      el.querySelector('#wf')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        const raw = el.querySelector('#wt').value.trim();
+        const w = raw === '' ? null : Math.round(parseFloat(raw) * 1000) / 1000;
+        if (raw !== '' && !(w >= 0)) return toast('Type the weight in kg, like 28.5', 'bad');
+        await S.setBoxWeight(d, b, w, ME.user); close(); toast('Weight saved'); onChange();
+      });
       el.querySelector('[data-rm]')?.addEventListener('click', async () => {
         if (!(await confirmBox({ title: 'Remove this box?', text: `${esc(b.boxNo || b.key)} will be taken off the list. Use this only if it was not loaded.`, ok: 'Remove box', danger: true }))) return;
         close(); onRemove();
@@ -624,15 +674,16 @@ route(/^\/list\/(\w+)$/, async id => {
   const admin = isAdmin(ME.user);
   if (!admin && d.createdBy !== ME.user.id) return location.replace('#/home');
   const s = SETTINGS;
-  const rows = d.boxes.map(b => `<tr class="link" data-k="${esc(b.key)}"><td class="num mute">${b.seq}</td><td class="code">${esc(b.boxNo || b.raw)}</td><td class="hide-sm">${esc(b.item || '—')}</td><td class="num hide-sm">${b.qty ?? '—'}</td><td class="num">${b.weight != null ? fmtW(b.weight) : '—'}</td><td class="hide-sm code mute" style="font-weight:500">${esc(b.uid || '—')}</td><td class="num mute">${fmt.time(b.scannedAt)}</td></tr>`).join('');
+  const noW = d.boxes.filter(b => b.weight == null).length;
+  const rows = d.boxes.map(b => `<tr class="link" data-k="${esc(b.key)}"><td class="num mute">${b.seq}</td><td class="code">${esc(b.boxNo || b.raw)}</td><td class="hide-sm">${esc(b.item || '—')}</td><td class="num hide-sm">${b.qty ?? '—'}</td><td class="num">${b.weight != null ? fmtW(b.weight) : '<span class="warn-dot" title="No weight">—</span>'}</td><td class="hide-sm code mute" style="font-weight:500">${esc(b.uid || '—')}</td><td class="num mute">${fmt.time(b.scannedAt)}</td></tr>`).join('');
   render({
     html: frame(admin ? '#/admin/lists' : '#/home', `<main class="page">
       <div class="page-head"><div>
         <h1 class="wide">${esc(prettyVehicle(d.vehicleNo))}</h1>
         <p><span class="code">${esc(d.code)}</span> · ${esc(d.transport)} <span class="pill ${d.status}">${d.status === 'open' ? 'Loading' : 'Closed ' + fmt.dt(d.closedAt)}</span></p></div>
         <div class="actions">
-          ${d.status === 'open' ? `<a class="btn primary" href="#/scan/${d.id}">${icon('scan')} Continue scanning</a>` : ''}
-          ${admin && d.status === 'closed' ? `<button class="btn" data-reopen>${icon('undo')} Reopen</button>` : ''}
+          ${d.status === 'open' && (isSuper(ME.user) || d.createdBy === ME.user.id) ? `<a class="btn primary" href="#/scan/${d.id}">${icon('scan')} Continue scanning</a>` : ''}
+          ${isSuper(ME.user) && d.status === 'closed' ? `<button class="btn" data-reopen>${icon('undo')} Reopen</button>` : ''}
           ${isSuper(ME.user) ? `<button class="btn danger icon" data-del title="Delete list" aria-label="Delete list">${icon('trash')}</button>` : ''}
         </div></div>
       <div class="detail">
@@ -642,7 +693,9 @@ route(/^\/list\/(\w+)$/, async id => {
           <tbody>${rows || `<tr><td colspan="7"><div class="empty"><b>No boxes on this list</b></div></td></tr>`}</tbody></table></div>
         </div>
         <aside>
-          <div class="counter"><div><span>Total boxes</span><b>${d.boxes.length}</b></div><div><span>Total weight</span><b>${fmtW(d.totalWeight)}</b></div></div>
+          <div class="counter"><div><span>Total boxes</span><b>${d.boxes.length}</b></div><div><span>Total weight (kg)</span><b>${fmtW(d.totalWeight)}</b></div></div>
+          ${d.weightEntered != null ? `<div class="note-line">${icon('alert')} Weighbridge weight typed at closing. The labels add up to <b>${fmtW(d.labelWeight)} kg</b>.</div>` : ''}
+          ${noW ? `<div class="note-line">${icon('alert')} ${noW} box${noW > 1 ? 'es have' : ' has'} no weight on the label${isSuper(ME.user) || d.status === 'open' ? ' — tap the box to type it' : ''}.</div>` : ''}
           <div class="panel"><div class="panel-body">
             <div class="export-grid">
               <button class="btn primary span" data-x="preview">${icon('eye')} Preview POL sheet</button>
@@ -655,7 +708,7 @@ route(/^\/list\/(\w+)$/, async id => {
             <dl class="kv" style="grid-template-columns:110px 1fr">
               <dt>Employee</dt><dd>${esc(d.empName)} (${esc(d.empNo)})</dd>
               <dt>Login time</dt><dd>${fmt.dt(d.loginAt)}</dd>
-              <dt>Serial key</dt><dd class="code">${esc(d.serialKey)}</dd>
+              ${d.serialKey ? `<dt>Serial key</dt><dd class="code">${esc(d.serialKey)}</dd>` : ''}
               <dt>Location</dt><dd>${esc(d.location)}</dd>
               <dt>Driver</dt><dd>${esc(d.driverName || '—')}${d.driverPhone ? '<br><span class="mute">' + esc(d.driverPhone) + '</span>' : ''}</dd>
               <dt>Started</dt><dd>${fmt.dt(d.createdAt)}</dd>
@@ -665,7 +718,7 @@ route(/^\/list\/(\w+)$/, async id => {
         </aside>
       </div></main>`, '#/home'),
     bind() {
-      $$('tr[data-k]').forEach(tr => tr.onclick = () => boxDrawer(d.boxes.find(b => b.key === tr.dataset.k), d));
+      $$('tr[data-k]').forEach(tr => tr.onclick = () => boxDrawer(d.boxes.find(b => b.key === tr.dataset.k), d, isSuper(ME.user) ? async () => { await S.removeBox(d, d.boxes.find(b => b.key === tr.dataset.k), ME.user); toast('Box removed'); go(); } : null, () => go()));
       $$('[data-x]').forEach(b => b.onclick = () => {
         if (b.dataset.x === 'preview') return openPreview(d, s);
         runExport(b.dataset.x, d, s, b);
@@ -724,39 +777,108 @@ const loadPdf = async () => { await loadScript('vendor/jspdf.umd.min.js'); await
 route(/^\/admin$/, async () => {
   const all = await S.dispatches();
   const people = await S.users();
-  const today = fmt.dayKey(Date.now());
+  const now = Date.now(), today = fmt.dayKey(now);
   const tl = all.filter(d => fmt.dayKey(d.createdAt) === today);
-  const boxesToday = tl.reduce((s, d) => s + d.boxes.length, 0);
-  const wtToday = tl.reduce((s, d) => s + (d.totalWeight || 0), 0);
+  const yl = all.filter(d => fmt.dayKey(d.createdAt) === fmt.dayKey(now - 86400000));
+  const sumB = l => l.reduce((s, d) => s + d.boxes.length, 0);
+  const sumW = l => l.reduce((s, d) => s + (Number(d.totalWeight) || 0), 0);
+  const boxesToday = sumB(tl), wtToday = sumW(tl);
+  const diff = boxesToday - sumB(yl);
   const open = all.filter(d => d.status === 'open');
-  const days = Array.from({ length: 7 }, (_, i) => { const t = Date.now() - (6 - i) * 86400000; const k = fmt.dayKey(t); return { t, k, n: all.filter(d => fmt.dayKey(d.createdAt) === k).reduce((s, d) => s + d.boxes.length, 0) }; });
+  const days = Array.from({ length: 7 }, (_, i) => { const t = now - (6 - i) * 86400000; const k = fmt.dayKey(t); const l = all.filter(d => fmt.dayKey(d.createdAt) === k); return { t, k, n: sumB(l), w: sumW(l) }; });
   const max = Math.max(1, ...days.map(d => d.n));
-  const audit = (await S.auditTrail(8));
+  const audit = await S.auditTrail(7);
   const onShift = people.filter(p => p.lastLogin && fmt.dayKey(p.lastLogin) === today);
+  const byEmp = Object.values(tl.reduce((m, d) => { const r = (m[d.createdBy] ||= { name: d.empName, empNo: d.empNo, lists: 0, boxes: 0, w: 0 }); r.lists++; r.boxes += d.boxes.length; r.w += Number(d.totalWeight) || 0; return m; }, {})).sort((a, b) => b.boxes - a.boxes);
+  const closed = all.filter(d => d.status === 'closed').slice(0, 6);
+  const bk = isSuper(ME.user) ? await S.lastBackup() : null;
+  const bkOld = isSuper(ME.user) && (!bk || now - bk.at > 7 * 86400000);
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   render({
     html: adminShell('#/admin', `<main class="page">
-      <div class="page-head"><div><h1>Overview</h1><p>${fmt.date(Date.now())} · ${esc(SETTINGS.plant || SETTINGS.company)}</p></div>
-        <div class="actions"><a class="btn" href="#/admin/people">${icon('plus')} Add employee</a><a class="btn primary" href="#/new">${icon('scan')} New list</a></div></div>
+      <div class="page-head"><div><h1>${greet}, ${esc(ME.user.name.split(' ')[0])}</h1><p>${new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })} · ${esc(SETTINGS.plant || SETTINGS.company)}</p></div>
+        ${isSuper(ME.user) ? `<div class="actions"><a class="btn" href="#/admin/people?add">${icon('plus')} Add person</a><a class="btn primary" href="#/new">${icon('scan')} New list</a></div>` : '<div class="actions"><span class="pill open">View only</span></div>'}</div>
+      ${bkOld ? `<div class="banner">${icon('cloud')}<div><b>${bk ? 'Last backup was ' + fmt.ago(bk.at) : 'No backup yet'}</b><span>Everything is stored on this device. Keep a copy in case the computer breaks.</span></div><button class="btn primary" id="bkNow">${icon('cloud')} Back up now</button></div>` : ''}
       <div class="kpis">
-        <div class="kpi hero">${spark(days.map(x => x.n))}<span>Boxes loaded today</span><b>${fmt.num(boxesToday)}</b><small>${tl.length} list${tl.length === 1 ? '' : 's'}</small></div>
-        <div class="kpi"><span>Weight today</span><b>${fmtW(wtToday)}</b><small>kg</small></div>
-        <div class="kpi"><span>Loading now</span><b>${open.length}</b><small>${open.length ? open.map(d => prettyVehicle(d.vehicleNo)).slice(0, 2).join(', ') : 'no open lists'}</small></div>
-        <div class="kpi"><span>On shift today</span><b>${onShift.length}</b><small>of ${people.filter(p => p.active).length} active accounts</small></div>
+        <div class="kpi hero">${spark(days.map(x => x.n))}<span>Boxes loaded today</span><b>${fmt.num(boxesToday)}</b><small>${tl.length} list${tl.length === 1 ? '' : 's'} · ${diff === 0 ? 'same as yesterday' : `${diff > 0 ? '+' : ''}${diff} vs yesterday`}</small></div>
+        <div class="kpi"><span>Weight today</span><b>${fmtW(wtToday)}</b><small>kg loaded</small></div>
+        <a class="kpi link" href="#/admin/lists?open"><span>Vehicles loading now</span><b>${open.length}</b><small>${open.length ? open.map(d => prettyVehicle(d.vehicleNo)).slice(0, 2).join(', ') : 'none at the dock'}</small></a>
+        <a class="kpi link" href="#/admin/activity"><span>Signed in today</span><b>${onShift.length}</b><small>of ${people.filter(p => p.active).length} people</small></a>
       </div>
+      ${open.length ? `<h2 class="sec">Loading now</h2><div class="lists">${open.map(listCard).join('')}</div>` : ''}
       <div class="split">
         <div class="panel"><div class="panel-head"><h2>Boxes per day</h2><span class="mute" style="font-size:13px">Last 7 days</span></div>
-          <div class="panel-body"><div class="bars">${days.map((d, i) => `<div class="bar ${i === 6 ? 'today' : ''}"><b>${d.n || ''}</b><i style="height:${(d.n / max) * 100}%;animation-delay:${i * 40}ms"></i><span>${i === 6 ? 'Today' : new Date(d.t).toLocaleDateString('en-IN', { weekday: 'short' })}</span></div>`).join('')}</div></div></div>
+          <div class="panel-body"><div class="bars">${days.map((d, i) => `<div class="bar ${i === 6 ? 'today' : ''}" title="${fmtW(d.w)} kg"><b>${d.n || ''}</b><i style="height:${(d.n / max) * 100}%;animation-delay:${i * 40}ms"></i><span>${i === 6 ? 'Today' : new Date(d.t).toLocaleDateString('en-IN', { weekday: 'short' })}</span></div>`).join('')}</div></div></div>
+        <div class="panel"><div class="panel-head"><h2>Today by person</h2></div>
+          ${byEmp.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Person</th><th class="num">Lists</th><th class="num">Boxes</th><th class="num">Kg</th></tr></thead><tbody>${byEmp.map(r => `<tr><td><div class="person"><div class="avatar" style="width:30px;height:30px;font-size:11px">${initials(r.name)}</div><div><b>${esc(r.name)}</b><span>${esc(r.empNo)}</span></div></div></td><td class="num">${r.lists}</td><td class="num"><b>${fmt.num(r.boxes)}</b></td><td class="num">${fmtW(r.w)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><b>No loading yet today</b>People appear here as soon as they start a list.</div>'}</div>
+      </div>
+      <div class="split">
+        <div class="panel"><div class="panel-head"><h2>Recently closed</h2><a href="#/admin/lists" style="font-size:13px">All lists</a></div>
+          ${closed.length ? `<div class="table-wrap"><table class="t"><thead><tr><th>Vehicle</th><th class="hide-sm">Closed</th><th class="num">Boxes</th><th class="num">Kg</th></tr></thead><tbody>${closed.map(d => `<tr class="link" data-id="${d.id}"><td><b class="wide">${esc(prettyVehicle(d.vehicleNo))}</b><div class="mute" style="font-size:12.5px">${esc(d.transport)}</div></td><td class="hide-sm mute">${fmt.ago(d.closedAt)}</td><td class="num"><b>${d.boxes.length}</b></td><td class="num">${fmtW(d.totalWeight)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><b>Nothing closed yet</b></div>'}</div>
         <div class="panel"><div class="panel-head"><h2>Latest activity</h2><a href="#/admin/activity" style="font-size:13px">See all</a></div>
           <ul class="feed">${audit.map(a => `<li><div class="avatar" style="width:30px;height:30px;font-size:11px">${initials(a.byName)}</div><div><b>${esc(a.byName)}</b><p>${esc(describe(a))}</p></div><time>${fmt.ago(a.at)}</time></li>`).join('') || '<li><div class="mute">Nothing yet</div></li>'}</ul></div>
       </div>
-      ${open.length ? `<h2 class="sec">Loading now</h2><div class="lists">${open.map(listCard).join('')}</div>` : ''}
     </main>`),
     bind() {
       $$('[data-open]').forEach(b => b.onclick = () => { location.hash = b.dataset.open.replace('#/scan/', '#/list/'); });
+      $$('tr[data-id]').forEach(tr => tr.onclick = () => { location.hash = `#/list/${tr.dataset.id}`; });
+      $('#bkNow')?.addEventListener('click', e => backupNow(e.currentTarget));
       live(() => { if (location.hash === '#/admin' && !document.querySelector('.drawer,.dialog')) go(); });
     }
   });
 }, { admin: true });
+
+// Back up: Google Drive when Google is set up, otherwise a file download.
+async function backupNow(btn) {
+  btn?.classList.add('busy');
+  try {
+    const data = await S.backup();
+    if (googleOn()) {
+      const name = await driveBackup(data, ME.user.googleEmail);
+      await S.markBackup('Google Drive', ME.user);
+      toast(`Saved to Google Drive → Yuken POL backups → ${name}`, 'ok', 5000);
+    } else {
+      const { download } = await import('./util.js');
+      download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `yuken-backup-${fmt.isoDate(Date.now())}.json`);
+      await S.markBackup('file download', ME.user);
+      toast('Backup file downloaded. Keep it in Google Drive or on a pen drive.', 'ok', 5000);
+    }
+    if (location.hash === '#/admin' || location.hash === '#/admin/settings') go();
+  } catch (err) { toast(err.message, 'bad', 5000); }
+  btn?.classList.remove('busy');
+}
+
+// Everyone: my account — password, theme, Google link, sign out.
+function accountDrawer() {
+  const u = ME.user;
+  drawer({
+    title: 'My account',
+    body: `<div class="person" style="margin-bottom:18px"><div class="avatar" style="width:48px;height:48px;font-size:16px">${initials(u.name)}</div><div><b style="font-size:17px">${esc(u.name)}</b><span>${ROLE_NAME[u.role]} · ${esc(u.empNo)}</span></div></div>
+      <dl class="kv" style="margin-bottom:20px"><dt>Signed in</dt><dd>${fmt.dt(ME.session.loginAt)}${ME.session.via === 'google' ? ' with Google' : ''}</dd>
+        <dt>Stays signed in</dt><dd>${isAdmin(u) ? 'Until you press Sign out' : 'Until the end of the shift'}</dd></dl>
+      <div class="fgroup"><h3>Look</h3><button class="btn" data-theme-btn-row type="button">${icon(theme() === 'light' ? 'moon' : 'sun')} ${theme() === 'light' ? 'Use dark mode' : 'Use light mode'}</button></div>
+      ${googleOn() && isAdmin(u) ? `<div class="fgroup"><h3>Google sign-in</h3>${u.googleEmail ? `<p class="mute" style="margin:0 0 10px">Linked to <b>${esc(u.googleEmail)}</b></p><button class="btn" id="unlink">Remove Google link</button>` : `<p class="mute" style="margin:0 0 10px">Link your Gmail to sign in with one tap.</p><button class="btn google" id="link">${icon('google')} Link my Google account</button>`}</div>` : ''}
+      <div class="fgroup"><h3>Change password</h3><form id="cp" style="display:grid;gap:14px" novalidate>
+        ${field({ name: 'cur', label: 'Current password', type: 'password' })}${field({ name: 'next', label: 'New password', type: 'password', hint: 'At least 8 characters with a letter and a number' })}${field({ name: 'again', label: 'Type it again', type: 'password' })}
+        <div><button class="btn primary">Save password</button></div></form></div>`,
+    foot: `<button class="btn danger" data-logout>${icon('logout')} Sign out</button>`,
+    onMount(el, close) {
+      el.querySelector('[data-theme-btn-row]').onclick = () => { setTheme(theme() === 'light' ? 'dark' : 'light'); close(); };
+      el.querySelector('#link')?.addEventListener('click', async () => {
+        try { const g = await googleProfile(); await S.linkGoogle(u, g.email); close(); toast(`Linked ${g.email}. Use "Sign in with Google" next time.`); } catch (err) { toast(err.message, 'bad', 5000); }
+      });
+      el.querySelector('#unlink')?.addEventListener('click', async () => { await S.linkGoogle(u, null); close(); toast('Google link removed'); });
+      el.querySelector('[data-logout]').addEventListener('click', () => close());
+      el.querySelector('#cp').onsubmit = async e => {
+        e.preventDefault();
+        const f = e.target; const v = formData(f);
+        if (!setErrors(f, { cur: validate.required(v.cur), next: validate.password(v.next), again: v.again === v.next ? '' : 'Passwords do not match' })) return;
+        try { await S.changePassword(u, v.cur, v.next); close(); toast('Password changed'); } catch (err) { setErrors(f, { cur: err.message }); }
+      };
+    }
+  });
+}
 
 function spark(vals) {
   const max = Math.max(1, ...vals), w = 84, h = 30;
@@ -776,23 +898,24 @@ const ACTIONS = {
   'user.create': 'Added employee', 'user.update': 'Updated employee', 'user.enable': 'Enabled', 'user.disable': 'Disabled', 'user.delete': 'Deleted employee', 'user.reset': 'Reset password for',
   'list.create': 'Started list', 'list.close': 'Closed list', 'list.reopen': 'Reopened list', 'list.delete': 'Deleted list',
   'list.xlsx': 'Exported Excel', 'list.pdf': 'Exported PDF', 'list.print': 'Printed', 'list.share': 'Shared',
-  'box.remove': 'Removed box', 'settings.update': 'Changed settings', 'demo.seed': 'Loaded demo data', 'data.import': 'Restored backup', 'report.xlsx': 'Exported report'
+  'box.remove': 'Removed box', 'box.weight': 'Set weight of', 'settings.update': 'Changed settings', 'demo.seed': 'Loaded demo data', 'data.import': 'Restored backup', 'data.backup': 'Backed up to', 'report.xlsx': 'Exported report',
+  'note': '', 'audit.delete': 'Deleted activity entry —'
 };
-const describe = a => `${ACTIONS[a.action] || a.action}${a.detail ? ' ' + a.detail : ''}`;
+const describe = a => [ACTIONS[a.action] ?? a.action, a.detail].filter(Boolean).join(' ');
 
 // ======================================================================
 // Admin: lists
 // ======================================================================
-route(/^\/admin\/lists$/, async () => {
+route(/^\/admin\/lists(?:\?(\w+))?$/, async (qs) => {
   let all = await S.dispatches();
   const people = await S.users();
   render({
     html: adminShell('#/admin/lists', `<main class="page">
-      <div class="page-head"><div><h1>Dispatch lists</h1><p>Every loading list from every employee. Search finds box numbers too.</p></div>
+      <div class="page-head"><div><h1>Loading lists</h1><p>Every list from every person. Search finds box numbers too.</p></div>
         <div class="actions"><button class="btn" id="rep">${icon('xls')} Export shown</button></div></div>
       <div class="panel">
         <div class="toolbar">
-          <div class="search">${icon('search')}<input class="input" id="q" placeholder="Vehicle, list, serial key or box no."></div>
+          <div class="search">${icon('search')}<input class="input" id="q" placeholder="Vehicle, list or box no."></div>
           <select class="input" id="emp"><option value="">All employees</option>${people.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
           <select class="input" id="stt"><option value="">Any status</option><option value="open">Loading</option><option value="closed">Closed</option></select>
           <input class="input" type="date" id="from" aria-label="From date"><input class="input" type="date" id="to" aria-label="To date">
@@ -817,6 +940,7 @@ route(/^\/admin\/lists$/, async () => {
           : `<tr><td colspan="7"><div class="empty"><b>${all.length ? 'No lists match' : 'No lists yet'}</b>${all.length ? 'Clear a filter to see more.' : 'Lists appear here as soon as someone starts loading.'}</div></td></tr>`;
       };
       ['q', 'emp', 'stt', 'from', 'to'].forEach(i => $('#' + i).addEventListener('input', draw));
+      if (qs === 'open') $('#stt').value = 'open';
       live(async () => { all = await S.dispatches(); draw(); });
       $('#rows').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) location.hash = `#/list/${tr.dataset.id}`; };
       $('#rep').onclick = async () => {
@@ -834,14 +958,14 @@ route(/^\/admin\/lists$/, async () => {
 // ======================================================================
 // Admin: employees
 // ======================================================================
-route(/^\/admin\/people$/, async () => {
+route(/^\/admin\/people(?:\?(\w+))?$/, async (qs) => {
   const people = await S.users();
   const all = await S.dispatches();
   const stats = id => { const m = all.filter(d => d.createdBy === id); return { lists: m.length, boxes: m.reduce((s, d) => s + d.boxes.length, 0) }; };
   render({
     html: adminShell('#/admin/people', `<main class="page">
-      <div class="page-head"><div><h1>Employees</h1><p>Only people added here can sign in. Every change is recorded.</p></div>
-        <div class="actions"><button class="btn primary" id="add">${icon('plus')} Add employee</button></div></div>
+      <div class="page-head"><div><h1>People</h1><p>${isSuper(ME.user) ? 'Add managers, employees and other workers. Only people added here can sign in.' : 'Everyone who can sign in. Only Chetan can add or change people.'}</p></div>
+        ${isSuper(ME.user) ? `<div class="actions"><button class="btn primary" id="add">${icon('plus')} Add person</button></div>` : ''}</div>
       <div class="panel"><div class="toolbar"><div class="search">${icon('search')}<input class="input" id="q" placeholder="Name, employee no., phone"></div></div>
       <div class="table-wrap"><table class="t"><thead><tr><th>Employee</th><th class="hide-sm">Phone</th><th class="hide-sm">Added</th><th class="hide-sm">Last sign-in</th><th class="num">Boxes</th><th>Status</th></tr></thead>
       <tbody id="rows"></tbody></table></div></div></main>`),
@@ -855,16 +979,15 @@ route(/^\/admin\/people$/, async () => {
           <td class="hide-sm">${fmt.date(p.createdAt)}<div class="mute" style="font-size:12.5px">by ${esc(p.createdByName)}</div></td>
           <td class="hide-sm">${p.lastLogin ? fmt.ago(p.lastLogin) : '<span class="mute">Never</span>'}</td>
           <td class="num"><b>${fmt.num(st.boxes)}</b><div class="mute" style="font-size:12.5px">${st.lists} lists</div></td>
-          <td>${!p.active ? '<span class="pill off">Disabled</span>' : p.role === 'super' ? '<span class="pill admin">Super admin</span>' : p.role === 'admin' ? '<span class="pill open">Admin</span>' : p.active ? '<span class="pill closed">Active</span>' : '<span class="pill off">Disabled</span>'}</td></tr>`; }).join('')
+          <td>${!p.active ? '<span class="pill off">Disabled</span>' : p.role === 'super' ? '<span class="pill admin">Admin</span>' : p.role === 'manager' ? '<span class="pill open">Manager</span>' : '<span class="pill closed">Employee</span>'}</td></tr>`; }).join('')
           || `<tr><td colspan="6"><div class="empty"><b>No one found</b>Try another name or number.</div></td></tr>`;
       };
       $('#q').oninput = draw;
-      $('#add').onclick = () => personDrawer(null);
+      $('#add')?.addEventListener('click', () => personDrawer(null));
+      if (qs === 'add') { history.replaceState(null, '', '#/admin/people'); if (isSuper(ME.user)) personDrawer(null); }
       $('#rows').onclick = e => {
         const tr = e.target.closest('tr[data-id]'); if (!tr) return;
-        const p = people.find(x => x.id === tr.dataset.id);
-        if (isAdmin(p) && !isSuper(ME.user) && p.id !== ME.user.id) return toast('Only the super admin can change admin accounts', 'bad');
-        personDrawer(p);
+        personDrawer(people.find(x => x.id === tr.dataset.id));
       };
       draw();
     }
@@ -874,10 +997,11 @@ route(/^\/admin\/people$/, async () => {
 function personDrawer(p) {
   const isNew = !p; p = p || { role: 'employee' };
   const self = p.id === ME.user.id;
+  const ro = !isSuper(ME.user);   // managers look, never change
   const today = fmt.isoDate(Date.now());
   drawer({
-    title: isNew ? 'Add employee' : esc(p.name),
-    body: `<form id="pf" novalidate>
+    title: isNew ? 'Add person' : esc(p.name),
+    body: `${ro ? '<div class="note-line" style="margin-bottom:16px">' + icon('lock') + ' View only. Ask Chetan to change anything here.</div>' : ''}<form id="pf" novalidate><fieldset ${ro ? 'disabled' : ''} style="border:0;margin:0;padding:0;min-width:0">
       <div class="fgroup"><h3>Personal</h3><div class="grid2">
         ${field({ name: 'name', label: 'Full name', value: p.name, span: true, attrs: 'autocomplete="off"' })}
         ${field({ name: 'dob', label: 'Date of birth', type: 'date', value: p.dob, attrs: `max="${today}"` })}
@@ -893,9 +1017,7 @@ function personDrawer(p) {
         ${field({ name: 'designation', label: 'Designation', value: p.designation, attrs: 'list="desig"' })}
         <datalist id="desig"><option>Loader</option><option>Dispatch Supervisor</option><option>Store Assistant</option><option>Security</option><option>Contract Worker</option></datalist>
         ${field({ name: 'joinDate', label: 'Joining date', type: 'date', value: p.joinDate, opt: true, attrs: `max="${today}"` })}
-        ${field({ name: 'role', label: 'Access', value: p.role, options: isSuper(ME.user)
-          ? [['employee', 'Employee — scan and own lists'], ['admin', 'Admin — sees everything, manages employees'], ['super', 'Super admin — full control']]
-          : [['employee', 'Employee — scan and own lists']].concat(isAdmin(p) ? [[p.role, ROLE_NAME[p.role]]] : []), attrs: self || !isSuper(ME.user) ? 'disabled' : '' })}
+        ${field({ name: 'role', label: 'Access', value: p.role, options: [['employee', 'Employee — scans and sees own lists'], ['manager', 'Manager — sees everything, changes nothing'], ['super', 'Admin — full control, like Chetan']], attrs: self ? 'disabled' : '' })}
       </div></div>
       <div class="fgroup"><h3>Emergency contact</h3><div class="grid2">
         ${field({ name: 'emName', label: 'Name', value: p.emName, opt: true })}
@@ -903,7 +1025,7 @@ function personDrawer(p) {
       </div></div>
       <div class="fgroup"><h3>Sign-in</h3><div class="grid2">
         ${field({ name: 'username', label: 'Username', value: p.username, attrs: 'autocapitalize="none" autocomplete="off"' })}
-        ${isNew ? field({ name: 'password', label: 'Temporary password', type: 'text', value: tempPw(), attrs: 'autocomplete="off"', hint: 'They set their own after first sign-in' }) : `<div class="field"><div class="lbl">Password</div><button type="button" class="btn" data-reset>${icon('key')} Reset password</button></div>`}
+        ${isNew ? field({ name: 'password', label: 'Temporary password', type: 'text', value: tempPw(), attrs: 'autocomplete="off"', hint: 'They set their own after first sign-in' }) : ro ? '' : `<div class="field"><div class="lbl">Password</div><button type="button" class="btn" data-reset>${icon('key')} Reset password</button></div>`}
       </div></div>
       ${isNew ? '' : `<div class="fgroup"><h3>Record</h3><div class="audit-box">
         <div><span>Account created</span>${fmt.dt(p.createdAt)}</div>
@@ -913,12 +1035,13 @@ function personDrawer(p) {
         <div><span>Last sign-in</span>${fmt.dt(p.lastLogin)}</div>
         <div><span>Aadhaar</span>${fmt.aadhaar(p.aadhaar)}</div>
       </div></div>`}
-    </form>`,
-    foot: `${!isNew && !self ? `<button class="btn ghost danger" data-toggle style="margin-right:auto">${icon('ban')} ${p.active ? 'Disable' : 'Enable'}</button>` : ''}
-      <button class="btn ghost" data-cancel>Cancel</button><button class="btn primary" data-save>${isNew ? 'Add employee' : 'Save changes'}</button>`,
+    </fieldset></form>`,
+    foot: ro ? `<button class="btn" data-cancel>Close</button>` : `${!isNew && !self ? `<button class="btn ghost danger" data-toggle style="margin-right:auto">${icon('ban')} ${p.active ? 'Disable' : 'Enable'}</button>` : ''}
+      <button class="btn ghost" data-cancel>Cancel</button><button class="btn primary" data-save>${isNew ? 'Add person' : 'Save changes'}</button>`,
     onMount(el, close) {
       const f = el.querySelector('#pf');
       el.querySelector('[data-cancel]').onclick = close;
+      if (ro) return;
       f.aadhaar.addEventListener('input', e => { const d = e.target.value.replace(/\D/g, '').slice(0, 12); e.target.value = d.replace(/(\d{4})(?=\d)/g, '$1 '); });
       if (isNew) f.name.addEventListener('input', () => { if (!f.username.dataset.touched) f.username.value = f.name.value.trim().toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9]/g, '') || ''; });
       f.username.addEventListener('input', () => { f.username.dataset.touched = 1; });
@@ -940,7 +1063,7 @@ function personDrawer(p) {
         const btn = e.currentTarget; btn.classList.add('busy');
         const data = { ...p, ...v, name: v.name.trim().replace(/\s+/g, ' '), empNo: v.empNo.trim().toUpperCase(), address: v.address.trim() };
         delete data.password;
-        if (self || !isSuper(ME.user)) data.role = p.role || 'employee';
+        if (self) data.role = p.role || 'employee';
         try {
           await S.saveUser(data, ME.user, isNew ? v.password : null);
           close();
@@ -972,12 +1095,63 @@ function tempPw() {
 // Admin: activity
 // ======================================================================
 route(/^\/admin\/activity$/, async () => {
-  const rows = await S.auditTrail(500);
-  render(adminShell('#/admin/activity', `<main class="page">
-    <div class="page-head"><div><h1>Activity</h1><p>Sign-ins, list changes and account changes, newest first.</p></div></div>
-    <div class="panel"><div class="table-wrap"><table class="t"><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>
-    ${rows.map(a => `<tr><td class="mute" style="white-space:nowrap">${fmt.dt(a.at)}</td><td><b>${esc(a.byName)}</b></td><td>${esc(describe(a))}</td></tr>`).join('') || '<tr><td colspan="3"><div class="empty"><b>No activity yet</b></div></td></tr>'}
-    </tbody></table></div></div></main>`));
+  let rows = await S.auditTrail(2000);
+  const people = await S.users();
+  const sup = isSuper(ME.user);
+  const KINDS = [['', 'Everything'], ['auth', 'Sign-ins and sign-outs'], ['list', 'Loading lists'], ['box', 'Boxes'], ['user', 'People'], ['note', 'Notes'], ['settings', 'Settings and backups']];
+  render({
+    html: adminShell('#/admin/activity', `<main class="page">
+      <div class="page-head"><div><h1>Activity</h1><p>Every sign-in, list, box and account change, newest first.${sup ? ' Tap a line to correct or delete it.' : ''}</p></div>
+        ${sup ? `<div class="actions"><button class="btn primary" id="addNote">${icon('note')} Add entry</button></div>` : ''}</div>
+      <div class="panel">
+        <div class="toolbar">
+          <div class="search">${icon('search')}<input class="input" id="q" placeholder="Search what happened"></div>
+          <select class="input" id="who"><option value="">Everyone</option>${people.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select>
+          <select class="input" id="kind">${KINDS.map(([v, t]) => `<option value="${v}">${t}</option>`).join('')}</select>
+          <input class="input" type="date" id="day" aria-label="Day">
+        </div>
+        <div class="table-wrap"><table class="t"><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody id="rows"></tbody></table></div>
+      </div></main>`),
+    bind() {
+      const draw = () => {
+        const q = $('#q').value.trim().toLowerCase(), who = $('#who').value, kind = $('#kind').value, day = $('#day').value;
+        const list = rows.filter(a => (!who || a.by === who) &&
+          (!kind || (kind === 'settings' ? /^(settings|data|demo|audit)/.test(a.action) : a.action.split('.')[0] === kind)) &&
+          (!day || fmt.isoDate(a.at) === day) && (!q || describe(a).toLowerCase().includes(q) || String(a.byName).toLowerCase().includes(q))).slice(0, 500);
+        $('#rows').innerHTML = list.map(a => `<tr class="${sup ? 'link' : ''}" data-id="${a.id}"><td class="mute" style="white-space:nowrap">${fmt.dt(a.at)}</td><td><b>${esc(a.byName)}</b></td><td>${a.action === 'note' ? `<span class="pill note">Note</span> ` : ''}${esc(describe(a))}${a.editedBy ? ` <span class="mute" style="font-size:12px">(edited by ${esc(a.editedBy)})</span>` : ''}</td></tr>`).join('')
+          || '<tr><td colspan="3"><div class="empty"><b>Nothing found</b>Clear a filter to see more.</div></td></tr>';
+      };
+      ['q', 'who', 'kind', 'day'].forEach(i => $('#' + i).addEventListener('input', draw));
+      const reload = async () => { rows = await S.auditTrail(2000); draw(); };
+      const editor = a => drawer({
+        title: a ? 'Edit activity entry' : 'Add activity entry',
+        body: `<form id="af" style="display:grid;gap:14px" novalidate>
+          ${a ? `<p class="mute" style="margin:0">${esc(a.byName)} · ${esc(ACTIONS[a.action] || a.action)}</p>` : ''}
+          ${field({ name: 'detail', label: a ? 'Details' : 'What happened', type: 'textarea', value: a ? a.detail : '' })}
+          ${field({ name: 'at', label: 'When', type: 'datetime-local', value: new Date((a ? a.at : Date.now()) - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) })}
+        </form>`,
+        foot: `${a ? `<button class="btn ghost danger" data-del style="margin-right:auto">${icon('trash')} Delete entry</button>` : ''}<button class="btn primary" data-save>${a ? 'Save changes' : 'Add entry'}</button>`,
+        onMount(el, close) {
+          el.querySelector('[data-save]').onclick = async () => {
+            const f = el.querySelector('#af'); const v = formData(f);
+            if (!a && !setErrors(f, { detail: validate.required(v.detail) })) return;
+            const at = v.at ? new Date(v.at).getTime() : Date.now();
+            if (a) await S.editAudit(a.id, { detail: v.detail.trim(), at }, ME.user); else await S.addNote(ME.user, v.detail.trim(), at);
+            close(); toast(a ? 'Entry updated' : 'Entry added'); reload();
+          };
+          el.querySelector('[data-del]')?.addEventListener('click', async () => {
+            if (!(await confirmBox({ title: 'Delete this entry?', text: 'It is removed from the log. A line saying you deleted it is kept.', ok: 'Delete', danger: true }))) return;
+            await S.deleteAudit(a.id, ME.user); close(); toast('Entry deleted'); reload();
+          });
+        }
+      });
+      if (sup) {
+        $('#addNote').onclick = () => editor(null);
+        $('#rows').onclick = e => { const tr = e.target.closest('tr[data-id]'); if (tr) editor(rows.find(a => a.id === tr.dataset.id)); };
+      }
+      draw();
+    }
+  });
 }, { admin: true });
 
 // ======================================================================
@@ -985,10 +1159,12 @@ route(/^\/admin\/activity$/, async () => {
 // ======================================================================
 route(/^\/admin\/settings$/, async () => {
   const s = SETTINGS;
+  const bk = await S.lastBackup();
   const chips = (k) => s[k].map((t, i) => `<span class="chip">${esc(t)}<button data-rm="${k}:${i}" aria-label="Remove ${esc(t)}">${icon('x')}</button></span>`).join('');
   render({
     html: adminShell('#/admin/settings', `<main class="page">
-      <div class="page-head"><div><h1>Settings</h1><p>What appears on printouts, the drop-down lists, and your data.</p></div></div>
+      <div class="page-head"><div><h1>Settings</h1><p>Printouts, drop-down lists, backups and the master PIN. Only Chetan sees this page.</p></div>
+        <div class="actions"><a class="btn" href="#/admin/activity">${icon('activity')} Activity log</a></div></div>
       <div class="settings-grid">
         <div class="panel"><div class="panel-head"><h2>Printout header</h2></div><form class="panel-body" id="hf" style="display:grid;gap:14px">
           ${field({ name: 'company', label: 'Company name', value: s.company })}
@@ -1005,16 +1181,16 @@ route(/^\/admin\/settings$/, async () => {
         <div class="panel"><div class="panel-head"><h2>Locations</h2></div><div class="panel-body">
           <div class="chips">${chips('locations')}</div>
           <form class="inline" data-add="locations"><input class="input" placeholder="Add a location" required><button class="btn">${icon('plus')} Add</button></form></div></div>
-        <div class="panel"><div class="panel-head"><h2>Your account</h2></div><div class="panel-body" style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn" id="pw">${icon('lock')} Change my password</button></div></div>
         <div class="panel"><div class="panel-head"><h2>Master PIN</h2></div><div class="panel-body" style="display:grid;gap:12px">
           <p class="mute" style="margin:0;font-size:14px">Resets any password from the sign-in screen, including the admin's. Five wrong tries lock it for 10 minutes.</p>
           <div><button class="btn" id="mpin">${icon('key')} Change master PIN</button></div></div></div>
         <div class="panel"><div class="panel-head"><h2>Data</h2></div><div class="panel-body" style="display:grid;gap:12px">
-          <p class="mute" style="margin:0;font-size:14px">Everything is saved on this computer, in this browser. Download a backup every Friday and keep it on a pen drive or in email.</p>
+          <p class="mute" style="margin:0;font-size:14px">Everything is saved on this device, in this browser. Back up once a week.${googleOn() ? ' Backups go to your Google Drive, in a folder called <b>Yuken POL backups</b>.' : ' Turn on Google (see AGENTS.md) to back up straight to Google Drive.'}</p>
+          <p style="margin:0;font-size:14px"><b>Last backup:</b> ${bk ? `${fmt.dt(bk.at)} to ${esc(bk.where)}` : 'never'}</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <button class="btn" id="bk">${icon('download')} Download backup</button>
-            <label class="btn">${icon('upload')} Restore backup<input type="file" accept=".json" id="rs" class="sr"></label>
+            <button class="btn primary" id="bk">${icon(googleOn() ? 'cloud' : 'download')} ${googleOn() ? 'Back up to Google Drive' : 'Download backup'}</button>
+            ${googleOn() ? `<button class="btn" id="rsd">${icon('upload')} Restore from Google Drive</button><button class="btn ghost" id="bkf">${icon('download')} Download a copy</button>` : ''}
+            <label class="btn">${icon('upload')} Restore from file<input type="file" accept=".json" id="rs" class="sr"></label>
             <button class="btn" id="demo">${icon('play')} Load demo data</button>
           </div></div></div>
       </div></main>`),
@@ -1029,16 +1205,6 @@ route(/^\/admin\/settings$/, async () => {
         await save({ [k]: [...s[k], v] }); go();
       });
       $$('[data-rm]').forEach(b => b.onclick = async () => { const [k, i] = b.dataset.rm.split(':'); await save({ [k]: s[k].filter((_, j) => j !== +i) }); go(); });
-      $('#pw').onclick = () => {
-        drawer({ title: 'Change my password', body: `<form id="cp" style="display:grid;gap:14px" novalidate>
-          ${field({ name: 'cur', label: 'Current password', type: 'password' })}${field({ name: 'next', label: 'New password', type: 'password', hint: 'At least 8 characters with a letter and a number' })}${field({ name: 'again', label: 'Type it again', type: 'password' })}</form>`,
-          foot: `<button class="btn primary" data-s>Save password</button>`,
-          onMount(el, close) { el.querySelector('[data-s]').onclick = async () => {
-            const f = el.querySelector('#cp'); const v = formData(f);
-            if (!setErrors(f, { cur: validate.required(v.cur), next: validate.password(v.next), again: v.again === v.next ? '' : 'Passwords do not match' })) return;
-            try { await S.changePassword(ME.user, v.cur, v.next); close(); toast('Password changed'); } catch (err) { setErrors(f, { cur: err.message }); }
-          }; } });
-      };
       $('#mpin').onclick = () => formDialog({
         title: 'Change master PIN',
         text: 'Use 8 to 16 digits. Write it down and keep it somewhere safe, away from this computer.',
@@ -1051,12 +1217,32 @@ route(/^\/admin\/settings$/, async () => {
           return true;
         }
       }).then(ok => ok && toast('Master PIN changed'));
-      $('#bk').onclick = async () => {
-        const data = await S.backup();
+      $('#bk').onclick = e => backupNow(e.currentTarget);
+      $('#bkf')?.addEventListener('click', async () => {
         const { download } = await import('./util.js');
-        download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `yuken-backup-${fmt.isoDate(Date.now())}.json`);
-        toast('Backup downloaded');
-      };
+        download(new Blob([JSON.stringify(await S.backup())], { type: 'application/json' }), `yuken-backup-${fmt.isoDate(Date.now())}.json`);
+        await S.markBackup('file download', ME.user); toast('Backup file downloaded');
+      });
+      $('#rsd')?.addEventListener('click', async e => {
+        const btn = e.currentTarget; btn.classList.add('busy');
+        try {
+          const { files, open } = await driveList(ME.user.googleEmail);
+          btn.classList.remove('busy');
+          if (!files.length) return toast('No backups in Google Drive yet', 'bad');
+          drawer({
+            title: 'Restore from Google Drive',
+            body: `<p class="mute" style="margin-top:0">Pick a backup. Everything on this device is replaced with it.</p><div class="pick">${files.map(f => `<button class="btn" data-f="${f.id}">${icon('cloud')} <span>${esc(f.name)}</span><small>${fmt.dt(new Date(f.modifiedTime).getTime())} · ${Math.round((+f.size || 0) / 1024)} KB</small></button>`).join('')}</div>`,
+            onMount(el, close) {
+              el.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
+                if (!(await confirmBox({ title: 'Restore this backup?', text: 'Everything on this device is replaced. Everyone signs in again.', ok: 'Restore', danger: true }))) return;
+                b.classList.add('busy');
+                try { await S.restore(await open(b.dataset.f)); close(); await S.logout(); toast('Backup restored'); location.hash = '#/login'; go(); }
+                catch (err) { b.classList.remove('busy'); toast(err.message, 'bad'); }
+              });
+            }
+          });
+        } catch (err) { btn.classList.remove('busy'); toast(err.message, 'bad', 5000); }
+      });
       if ($('#rs')) $('#rs').onchange = async e => {
         const file = e.target.files[0]; if (!file) return;
         if (!(await confirmBox({ title: 'Restore this backup?', text: 'Everything in this browser is replaced with the backup. You will need to sign in again.', ok: 'Restore', danger: true }))) return;

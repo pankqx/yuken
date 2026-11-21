@@ -2,20 +2,40 @@
 import { db, uid } from './db.js';
 import { MASTER_PIN } from './config.js';
 import { hashPassword } from './util.js';
+import { parseScan } from './parse.js';
 import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, totals, renumber, demoLists, DEMO_PEOPLE, DEMO_PASSWORD, dayKey, listCode } from './common.js';
 
 const SESSION_KEY = 'yk.session';
 
-// Roles: 'super' (the owner, one person), 'admin' (managers), 'employee'.
-export const isAdmin = u => u?.role === 'admin' || u?.role === 'super';
-export const isSuper = u => u?.role === 'super';
+// Roles: 'super' (Chetan — full control), 'manager' (bosses — look, never
+// change), 'employee' (loaders and other workers — scan their own lists).
+export const isAdmin = u => u?.role === 'manager' || u?.role === 'super';   // can see everything
+export const isSuper = u => u?.role === 'super';                            // can change everything
 
-export async function init() {
-  // Older data had only 'admin'. The first admin created becomes the super admin.
+let ready;
+export const init = () => (ready ||= migrate());
+async function migrate() {
   const all = await db.all('users');
+  // Older data: the first 'admin' becomes the super admin, other admins become managers.
   if (!all.some(u => u.role === 'super')) {
     const first = all.filter(u => u.role === 'admin').sort((a, b) => a.createdAt - b.createdAt)[0];
-    if (first) { first.role = 'super'; await db.put('users', first); }
+    if (first) first.role = 'super';
+  }
+  for (const u of all) if (u.role === 'admin') u.role = 'manager';
+  for (const u of all) await db.put('users', u);
+  // Weights read by the old parser are read again from the saved label text.
+  if (!(await db.get('settings', 'migr-weight-2'))) {
+    for (const d of await db.all('dispatches')) {
+      let changed = false;
+      d.boxes = d.boxes.map(b => {
+        if (b.weightBy) return b;           // typed in by hand — keep
+        const w = parseScan(b.raw || '')?.weight ?? null;
+        if (w !== (b.weight ?? null)) { changed = true; return { ...b, weight: w }; }
+        return b;
+      });
+      if (changed) { totals(d); await db.put('dispatches', d); }
+    }
+    await db.put('settings', { id: 'migr-weight-2', at: Date.now() });
   }
 }
 
@@ -36,6 +56,20 @@ export async function log(actor, action, detail = '') {
 }
 export async function auditTrail(n = 200) {
   return (await db.all('audit')).sort((a, b) => b.at - a.at).slice(0, n);
+}
+// Only the super admin edits the activity log. Each change leaves its own line.
+export async function addNote(actor, text, at) {
+  await db.put('audit', { id: uid('a'), at: at || Date.now(), by: actor.id, byName: actor.name, action: 'note', detail: text, addedBy: actor.name });
+}
+export async function editAudit(id, patch, actor) {
+  const a = await db.get('audit', id); if (!a) return;
+  Object.assign(a, patch, { editedAt: Date.now(), editedBy: actor.name });
+  await db.put('audit', a);
+}
+export async function deleteAudit(id, actor) {
+  const a = await db.get('audit', id); if (!a) return;
+  await db.del('audit', id);
+  await log(actor, 'audit.delete', `${a.byName}: ${a.action}${a.detail ? ' ' + a.detail : ''}`);
 }
 
 // ---------- people ----------
@@ -105,21 +139,45 @@ export async function login(username, password) {
     attempts[key] = a;
     throw new Error('Username or password is incorrect.');
   }
-  if (!u.active) throw new Error('This account is disabled. Ask your admin to enable it.');
+  if (!u.active) throw new Error('This account is disabled. Ask Chetan to enable it.');
   delete attempts[key];
-  const session = { userId: u.id, loginAt: Date.now() };
+  return startSession(u, 'password');
+}
+
+// Google sign-in: the Gmail address must be linked to an account first.
+export async function loginGoogle(email) {
+  const e = String(email || '').toLowerCase();
+  const u = (await db.all('users')).find(x => x.googleEmail === e);
+  if (!u) throw new Error(`${email} is not linked to any account. Sign in with your password, then link Google in Settings.`);
+  if (!u.active) throw new Error('This account is disabled.');
+  return startSession(u, 'google');
+}
+export async function linkGoogle(user, email) {
+  const all = await db.all('users');
+  const e = String(email || '').toLowerCase();
+  if (e && all.some(x => x.id !== user.id && x.googleEmail === e)) throw new Error(`${email} is already linked to another account.`);
+  const u = await db.get('users', user.id);
+  u.googleEmail = e || null; await db.put('users', u); Object.assign(user, u);
+  await log(user, 'user.update', e ? `linked Google ${e}` : 'removed Google link');
+}
+
+async function startSession(u, via) {
+  const session = { userId: u.id, loginAt: Date.now(), via };
   localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   u.lastLogin = session.loginAt; await db.put('users', u);
-  await log(u, 'auth.login');
+  await log(u, 'auth.login', via === 'google' ? 'with Google' : '');
   return { user: u, session };
 }
 
 export async function currentSession() {
   try {
     const s = JSON.parse(localStorage.getItem(SESSION_KEY));
-    if (!s || Date.now() - s.loginAt > SHIFT_MS) { localStorage.removeItem(SESSION_KEY); return null; }
+    if (!s) return null;
     const user = await db.get('users', s.userId);
     if (!user || !user.active) { localStorage.removeItem(SESSION_KEY); return null; }
+    // Chetan and managers stay signed in until they press Sign out.
+    // Employees are signed out after a shift, so the next person signs in fresh.
+    if (!isAdmin(user) && Date.now() - s.loginAt > SHIFT_MS) { localStorage.removeItem(SESSION_KEY); await log(user, 'auth.logout', 'shift ended'); return null; }
     return { user, session: s };
   } catch { return null; }
 }
@@ -179,6 +237,13 @@ export async function removeBox(d, box, user) {
   await log(user, 'box.remove', `${box.boxNo || box.key} from ${d.code}`);
 }
 
+export async function setBoxWeight(d, box, weight, user) {
+  const b = d.boxes.find(x => x.key === box.key); if (!b) return;
+  b.weight = weight; b.weightBy = user.name;
+  await save(d);
+  await log(user, 'box.weight', `${b.boxNo || b.key} on ${d.code}: ${weight ?? '—'} kg`);
+}
+
 export async function closeDispatch(d, user, extra = {}) {
   // Recompute from the saved box records at the point of closing so the
   // manifest total always includes every scanned label weight.
@@ -204,7 +269,12 @@ export async function deleteDispatch(d, user) {
 
 // ---------- data ----------
 export const backup = () => db.exportAll();
-export async function restore(data) { await db.importAll(data); await log(null, 'data.import'); }
+export async function markBackup(where, user) {
+  await db.put('settings', { id: 'lastBackup', at: Date.now(), where, by: user?.name });
+  await log(user, 'data.backup', where);
+}
+export const lastBackup = () => db.get('settings', 'lastBackup');
+export async function restore(data) { await db.importAll(data); ready = null; await init(); await log(null, 'data.import'); }
 
 export async function seedDemo(admin) {
   const people = [];

@@ -7,7 +7,7 @@ import { weightNumber } from './common.js';
 const FIELDS = [
   ['boxNo',       /^(ps\s*)?box\s*(num(ber)?|no\.?)?$|^packing\s*slip|^ps\s*no|^box$/i],
   ['uid',         /unique|^uid|serial\s*no|ids?\s*packed/i],
-  ['weight',      /weight|wt\.?$|^kg$/i],
+  ['weight',      /weight|\bwt\b|^kgs?$|gross|net\s*wt/i],
   ['datePacked',  /date|packed/i],
   ['customer',    /^customer|^cust/i],
   ['shipTo',      /ship\s*-?\s*to|consignee|deliver/i],
@@ -34,9 +34,7 @@ function finish(rec, raw) {
     const m = rec.boxNo.match(/^(\d+)-(\d+)$/);
     if (m) { rec.packingSlip = m[1]; rec.boxIndex = m[2]; }
   }
-  if (rec.weight != null) {
-    rec.weight = weightNumber(rec.weight);
-  }
+  if (rec.weight != null) rec.weight = parseWeight(rec.weight);
   if (rec.qty != null) {
     const q = parseInt(String(rec.qty).replace(/\D/g, ''), 10);
     rec.qty = isNaN(q) ? null : q;
@@ -45,6 +43,19 @@ function finish(rec, raw) {
   // otherwise the box number, otherwise the raw text.
   rec.key = (rec.uid || rec.boxNo || raw).toString().trim().toUpperCase();
   return rec;
+}
+
+// "28.7", "28.7 kg", "28,7", "1,234.5 KGS", "28.700" → a number in kg.
+// Grams ("28700 g") are turned into kg. Anything unreadable → null.
+export function parseWeight(v) {
+  if (v == null || v === '') return null;
+  const t = String(v).trim().toLowerCase();
+  const m = t.match(/\d[\d.,]*/);                     // first number on the label
+  if (!m) return null;
+  let w = weightNumber(m[0].replace(/[.,]$/, ''));   // handles 28,7 · 1,234.5 · 1.234,5
+  if (w == null) return null;
+  if (/\d\s*(g|gm|gms|grams?)\b/.test(t) && !/kg/.test(t)) w /= 1000;   // grams → kg
+  return Math.round(w * 1000) / 1000;
 }
 
 export function parseScan(input) {
@@ -66,7 +77,7 @@ export function parseScan(input) {
 
   // Key: value payload. Labels typed on one line ("PS Box Num: 1-3 Box Weight: 28.7 …")
   // are split in front of each known field name.
-  const LABELS = /(?=\b(?:PS\s*Box\s*Num|Box\s*No|Box\s*Weight|Date\s*Packed|Customer|Ship[\s-]*To|Transporter|Item\s*Description|Item|Qty|Unique\s*IDs?(?:\s*packed)?)\s*[:=])/i;
+  const LABELS = /(?=\b(?:PS\s*Box\s*Num|Box\s*No|(?:Box|Gross|Net)\s*(?:Weight|Wt)|(?<!(?:Box|Gross|Net)\s*)Weight|Date\s*Packed|Customer|Ship[\s-]*To|Transporter|Item\s*Description|Item|Qty|Unique\s*IDs?(?:\s*packed)?)\s*[:=])/i;
   let text = raw;
   if (!/[\n|;\t]/.test(raw) && (raw.match(/[:=]/g) || []).length >= 2) text = raw.split(LABELS).join('\n');
   const parts = text.split(/\n|\||;|\t/).map(s => s.trim()).filter(Boolean);

@@ -19,13 +19,7 @@ A web app for Yuken India Limited's finished-goods dispatch dock. Employees scan
 
 ## Who can do what
 
-| Role | Who | Can do |
-| --- | --- | --- |
-| Super admin | Chetan | Everything: add or change admins, settings, master PIN, backups, delete lists |
-| Admin | Mahesh, Sheela (the bosses) | Dashboard, all lists and exports, reopen lists, add and manage employees, activity |
-| Employee | Dock staff | Create lists, scan, close, print their own lists |
-
-The first account created on a computer becomes the super admin. The super admin adds the admins from **Employees → Add employee → Access: Admin**.
+The first account created on a device is the admin (Chetan). He adds managers and employees from **People → Add person**.
 
 ## How it runs at the dock
 
@@ -67,3 +61,11 @@ js/camera.js             camera scanning
 js/ui.js, util.js        UI kit, icons, validation
 vendor/                  three.js, SheetJS, jsPDF, html5-qrcode (bundled so the dock works on weak Wi-Fi)
 ```
+
+## Roles and sign-in
+
+- **Admin (Chetan)**: full control. He signs in with his password, or with Google once it is linked, and stays signed in until he presses Sign out.
+- **Managers (Mahesh, Sheela)**: view everything, change nothing. Their sign-in is on the "Manager or admin" tab.
+- **Employees**: start lists and scan. They are signed out at the end of a shift.
+
+See **AGENTS.md** for the file map, the pages, how weights work and how to turn on Google sign-in and Google Drive backup.

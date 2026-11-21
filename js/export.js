@@ -1,5 +1,6 @@
 // Excel, PDF, print and share for dispatch lists.
 import { fmt, esc, download, prettyVehicle } from './util.js';
+import { totals } from './common.js';
 
 const fileBase = d => `${d.code}_${prettyVehicle(d.vehicleNo).replace(/\s/g, '')}`;
 
@@ -9,7 +10,7 @@ const boxRow = (b, d) => ({
   'Unique ID': b.uid || '',
   'Item': b.item || '',
   'Qty': b.qty ?? '',
-  'Weight (kg)': b.weight ?? '',
+  'Weight (kg)': b.weight != null ? Number(b.weight) : '',
   'Packed on': b.datePacked || '',
   'Customer': b.customer || '',
   'Ship to': b.shipTo || '',
@@ -28,7 +29,7 @@ export function toExcel(d, settings) {
     ['List', d.code, '', 'Status', d.status === 'closed' ? 'Closed' : 'Open'],
     ['Employee', `${d.empName} (${d.empNo})`, '', 'Login time', fmt.dt(d.loginAt)],
     ['Vehicle no.', prettyVehicle(d.vehicleNo), '', 'Transport', d.transport],
-    ['Serial key', d.serialKey, '', 'Location', d.location],
+    ['Location', d.location, '', d.serialKey ? 'Serial key' : '', d.serialKey || ''],
     ['Driver', [d.driverName, d.driverPhone].filter(Boolean).join(' · '), '', 'Created', fmt.dt(d.createdAt)],
     ['Total boxes', d.boxes.length, '', 'Total weight (kg)', d.totalWeight ?? 0],
     []
@@ -51,7 +52,7 @@ export function reportExcel(lists, settings, label = 'report') {
   const wb = XLSX.utils.book_new();
   const summary = lists.map(d => ({
     'List': d.code, 'Status': d.status, 'Date': fmt.date(d.createdAt), 'Employee': d.empName, 'Emp no.': d.empNo,
-    'Vehicle': prettyVehicle(d.vehicleNo), 'Transport': d.transport, 'Serial key': d.serialKey, 'Location': d.location,
+    'Vehicle': prettyVehicle(d.vehicleNo), 'Transport': d.transport, 'Location': d.location,
     'Driver': d.driverName || '', 'Boxes': d.boxes.length, 'Weight (kg)': d.totalWeight ?? 0, 'Closed at': d.closedAt ? fmt.dt(d.closedAt) : ''
   }));
   const s1 = XLSX.utils.json_to_sheet(summary);
@@ -78,7 +79,10 @@ async function logoPNG() {
   return (logoCache = c.toDataURL('image/png'));
 }
 
+const kg = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export async function toPDF(d, settings) {
+  d = totals({ ...d, boxes: [...d.boxes] });
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const W = 210, M = 12;
@@ -103,10 +107,10 @@ export async function toPDF(d, settings) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...(closed ? [5, 38, 26] : [58, 36, 0]));
   doc.text(closed ? 'CLOSED' : 'LOADING', W - M - 12, 23.2, { align: 'center' });
 
-  // details cards
+  // details cards: two rows of four
   const meta = [
-    ['Employee', `${d.empName} (${d.empNo})`], ['Login time', fmt.dt(d.loginAt)], ['Vehicle no.', prettyVehicle(d.vehicleNo)], ['Transport', d.transport],
-    ['Serial key', d.serialKey], ['Location', d.location], ['Driver', [d.driverName, d.driverPhone].filter(Boolean).join(', ') || '-'], ['Closed', closed ? fmt.dt(d.closedAt) : 'Open']
+    ['Vehicle no.', prettyVehicle(d.vehicleNo)], ['Transport', d.transport], ['Location', d.location], ['Driver', [d.driverName, d.driverPhone].filter(Boolean).join(', ') || '-'],
+    ['Loaded by', `${d.empName} (${d.empNo})`], ['Login time', fmt.dt(d.loginAt)], ['Started', fmt.dt(d.createdAt)], ['Closed', closed ? fmt.dt(d.closedAt) : 'Still loading']
   ];
   const cw = (W - 2 * M - 3 * 2.5) / 4;
   meta.forEach(([k, v], i) => {
@@ -117,34 +121,52 @@ export async function toPDF(d, settings) {
     doc.setFontSize(9); doc.setTextColor(...ink); doc.text(doc.splitTextToSize(String(v || '-'), cw - 5)[0], x + 3.5, y + 9.5);
   });
 
-  const hasDetail = d.boxes.some(b => b.item || b.weight != null);
-  const body = d.boxes.map(b => hasDetail
-    ? [b.seq, b.boxNo || '', b.item || '', b.qty ?? '', b.weight ?? '', b.uid || '', fmt.time(b.scannedAt)]
-    : [b.seq, b.boxNo || b.raw, fmt.time(b.scannedAt)]);
+  // summary strip: driver photo | total boxes | total weight | weight check
+  const y0 = 73, sh = 34;
+  const pw = 30;
+  doc.setFillColor(...tint); doc.roundedRect(M, y0, pw, sh, 2, 2, 'F');
+  if (d.driverPhoto) { try { doc.addImage(d.driverPhoto, 'JPEG', M + 1, y0 + 1, pw - 2, sh - 8); } catch { /* bad image */ } }
+  else { doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...mute); doc.text('No photo', M + pw / 2, y0 + 14, { align: 'center' }); }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...mute); doc.text('Driver photo', M + pw / 2, y0 + sh - 2.2, { align: 'center' });
+  const boxW = (W - 2 * M - pw - 3 * 3) / 3;
+  const card = (i, label, val, sub, dark) => {
+    const x = M + pw + 3 + i * (boxW + 3);
+    doc.setFillColor(...(dark ? navy : tint)); doc.roundedRect(x, y0, boxW, sh, 2.5, 2.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...(dark ? [169, 216, 242] : mute)); doc.text(label, x + 5, y0 + 8);
+    doc.setFontSize(22); doc.setTextColor(...(dark ? [255, 255, 255] : ink)); doc.text(val, x + 5, y0 + 21);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...(dark ? [169, 216, 242] : mute)); doc.text(doc.splitTextToSize(sub, boxW - 9).slice(0, 2), x + 5, y0 + 27);
+  };
+  const withW = d.boxes.filter(b => b.weight != null).length;
+  card(0, 'TOTAL BOXES', String(d.boxes.length), `${withW} of ${d.boxes.length} with weight on label`, true);
+  card(1, 'TOTAL WEIGHT', kg(d.totalWeight) + ' kg', d.weightEntered != null ? 'Weighbridge weight' : 'Added up from box labels', true);
+  card(2, 'LABEL WEIGHT', kg(d.labelWeight) + ' kg', d.weightEntered != null ? `Differs by ${kg(Math.abs(d.weightEntered - d.labelWeight))} kg` : 'Matches the total', false);
+
+  // box table
+  const body = d.boxes.map(b => [b.seq, b.boxNo || b.raw, b.item || '', b.qty ?? '', b.weight != null ? kg(b.weight) : '-', b.uid || '', fmt.time(b.scannedAt)]);
   doc.autoTable({
-    startY: 75, margin: { left: M, right: M },
-    head: [hasDetail ? ['#', 'Box no.', 'Item', 'Qty', 'Kg', 'Unique ID', 'Time'] : ['#', 'Box no.', 'Time']],
-    body: body.length ? body : [[{ content: 'No boxes scanned', colSpan: hasDetail ? 7 : 3, styles: { halign: 'center', textColor: mute } }]],
-    theme: 'plain', styles: { fontSize: 8.5, cellPadding: 2, textColor: ink, lineColor: [220, 232, 241], lineWidth: { bottom: 0.2 } },
-    headStyles: { fillColor: navy, textColor: 255, fontStyle: 'bold' },
+    startY: y0 + sh + 6, margin: { left: M, right: M, bottom: 16 },
+    head: [['#', 'Box no.', 'Item', 'Qty', 'Weight (kg)', 'Unique ID', 'Time']],
+    body: body.length ? body : [[{ content: 'No boxes scanned', colSpan: 7, styles: { halign: 'center', textColor: mute } }]],
+    foot: [[{ content: `${d.boxes.length} boxes`, colSpan: 3, styles: { halign: 'left' } }, String(d.boxes.reduce((s, b) => s + (Number(b.qty) || 0), 0) || ''), kg(d.labelWeight), { content: '', colSpan: 2 }]],
+    showFoot: 'lastPage',
+    theme: 'grid', styles: { fontSize: 8.5, cellPadding: { top: 2.1, bottom: 2.1, left: 2.2, right: 2.2 }, textColor: ink, lineColor: [214, 228, 239], lineWidth: 0.2, valign: 'middle', overflow: 'ellipsize' },
+    headStyles: { fillColor: navy, textColor: 255, fontStyle: 'bold', lineColor: navy },
+    footStyles: { fillColor: [222, 239, 250], textColor: navy, fontStyle: 'bold', fontSize: 9, lineColor: [214, 228, 239] },
     alternateRowStyles: { fillColor: [245, 250, 254] },
-    columnStyles: { 0: { cellWidth: 10, halign: 'center', textColor: blue, fontStyle: 'bold' }, 1: { font: 'courier', fontStyle: 'bold' } }
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center', textColor: blue, fontStyle: 'bold' },
+      1: { cellWidth: 34, font: 'courier', fontStyle: 'bold' },
+      2: { cellWidth: 'auto' },
+      3: { cellWidth: 11, halign: 'right' },
+      4: { cellWidth: 22, halign: 'right', fontStyle: 'bold' },
+      5: { cellWidth: 40, font: 'courier', fontSize: 7.5 },
+      6: { cellWidth: 15, halign: 'right', textColor: mute }
+    },
+    didParseCell: c => { if (c.section === 'foot' && c.column.index === 4) c.cell.styles.halign = 'right'; if (c.section === 'head' && [3, 4, 6].includes(c.column.index)) c.cell.styles.halign = 'right'; }
   });
 
-  let y = doc.lastAutoTable.finalY + 8;
-  if (y > 232) { doc.addPage(); y = 20; }
-  const tot = (x, label, val) => {
-    doc.setFillColor(...navy); doc.roundedRect(x, y, 56, 22, 2.5, 2.5, 'F');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(169, 216, 242); doc.text(label, x + 5, y + 7);
-    doc.setFontSize(19); doc.setTextColor(255); doc.text(val, x + 5, y + 17);
-  };
-  tot(M, 'Total boxes', String(d.boxes.length));
-  tot(M + 60, 'Total weight', fmt.kg(d.totalWeight));
-  if (d.driverPhoto) {
-    try { doc.addImage(d.driverPhoto, 'JPEG', W - M - 46, y, 46, 32); } catch { /* bad image */ }
-    doc.setFontSize(7.5); doc.setTextColor(...mute); doc.text('Driver photo', W - M - 46, y + 36);
-  }
-  const sy = y + 50;
+  let sy = doc.lastAutoTable.finalY + 22;
+  if (sy > 278) { doc.addPage(); sy = 40; }
   [['Loaded by', M], ['Driver', M + 64], ['Security', M + 128]].forEach(([t, x]) => {
     doc.setDrawColor(...navy); doc.setLineWidth(0.4); doc.line(x, sy, x + 54, sy);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...mute); doc.text(t, x, sy + 4.5);
@@ -180,6 +202,7 @@ export async function share(d, s, kind = 'pdf') {
 
 // ---------- POL sheet (preview + print) ----------
 export function sheetHTML(d, s) {
+  d = totals({ ...d, boxes: [...d.boxes] });
   const cols = 6, min = 60;
   const n = Math.max(min, Math.ceil(d.boxes.length / cols) * cols);
   const cells = Array.from({ length: n }, (_, i) => d.boxes[i]);
@@ -197,15 +220,15 @@ export function sheetHTML(d, s) {
         <div><span>Login time</span><b>${fmt.dt(d.loginAt)}</b></div>
         <div><span>Vehicle no.</span><b>${esc(prettyVehicle(d.vehicleNo))}</b></div>
         <div><span>Transport</span><b>${esc(d.transport)}</b></div>
-        <div><span>Serial key</span><b>${esc(d.serialKey)}</b></div>
+        <div><span>Started</span><b>${fmt.dt(d.createdAt)}</b></div>
         <div><span>Location</span><b>${esc(d.location)}</b></div>
         <div><span>Driver</span><b>${esc([d.driverName, d.driverPhone].filter(Boolean).join(', ') || '—')}</b></div>
       </div>
       <div class="ps-h"><b>Master boxes loaded</b><span>Scanned ${fmt.dt(d.boxes[0]?.scannedAt)} to ${fmt.time(d.boxes.at(-1)?.scannedAt)}</span></div>
-      <div class="ps-grid">${cells.map((b, i) => `<div class="${b ? '' : 'blank'} ${Math.floor(i / cols) % 2 ? 'alt' : ''}"><i>${i + 1}</i>${b ? esc(b.boxNo || b.raw) : ''}</div>`).join('')}</div>
+      <div class="ps-grid">${cells.map((b, i) => `<div class="${b ? '' : 'blank'} ${Math.floor(i / cols) % 2 ? 'alt' : ''}"><i>${i + 1}</i>${b ? `<span>${esc(b.boxNo || b.raw)}</span>${b.weight != null ? `<em>${kg(b.weight)}</em>` : ''}` : ''}</div>`).join('')}</div>
       <div class="ps-foot">
         <div class="ps-tot"><span>Total boxes</span><b>${d.boxes.length}</b></div>
-        <div class="ps-tot"><span>Total weight</span><b>${fmt.kg(d.totalWeight)}</b></div>
+        <div class="ps-tot"><span>Total weight${d.weightEntered != null ? ' (weighbridge)' : ''}</span><b>${kg(d.totalWeight)} kg</b>${d.weightEntered != null ? `<small>Labels: ${kg(d.labelWeight)} kg</small>` : ''}</div>
         <div class="ps-photo">${d.driverPhoto ? `<img src="${d.driverPhoto}" alt="">` : '<em>No driver photo</em>'}<span>Driver photo</span></div>
       </div>
       <div class="ps-sign"><div>Loaded by</div><div>Driver</div><div>Security</div></div>
