@@ -33,7 +33,34 @@ export async function startCamera(elId, onCode) {
     () => {}
   );
   return {
-    async stop() { try { await cam.stop(); cam.clear(); } catch { /* already stopped */ } }
+    async stop() { try { await cam.stop(); cam.clear(); } catch { /* already stopped */ } },
+    // Manual capture: read the current picture harder (full size, then zoomed
+    // into the middle). For when the label is small, angled or badly lit.
+    async capture() {
+      const v = document.querySelector(`#${elId} video`);
+      if (!v?.videoWidth) return null;
+      const shot = (zoom) => {
+        const c = document.createElement('canvas');
+        const sw = v.videoWidth / zoom, sh = v.videoHeight / zoom;
+        c.width = Math.min(1600, sw * zoom); c.height = c.width * sh / sw;
+        c.getContext('2d').drawImage(v, (v.videoWidth - sw) / 2, (v.videoHeight - sh) / 2, sw, sh, 0, 0, c.width, c.height);
+        return c;
+      };
+      for (const zoom of [1, 1.6, 2.4]) {
+        const c = shot(zoom);
+        if ('BarcodeDetector' in window) {
+          try { const r = await new window.BarcodeDetector().detect(c); if (r[0]?.rawValue) return r[0].rawValue; } catch { /* try the other reader */ }
+        }
+        try {
+          let host = document.getElementById('cap-reader');
+          if (!host) { host = document.createElement('div'); host.id = 'cap-reader'; host.hidden = true; document.body.append(host); }
+          const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+          const text = await new window.Html5Qrcode('cap-reader', { verbose: false }).scanFile(new File([blob], 'shot.png', { type: 'image/png' }), false);
+          if (text) return text;
+        } catch { /* nothing found at this zoom */ }
+      }
+      return null;
+    }
   };
 }
 

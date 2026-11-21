@@ -202,6 +202,22 @@ function viewSetup() {
 }
 
 // ---------- sign in ----------
+// Wipe the device and go back to first-time setup. Needs the master PIN.
+function eraseDialog() {
+  return formDialog({
+    title: 'Start fresh on this device?',
+    text: 'This deletes <b>every account, loading list, photo and activity entry</b> on this device. It cannot be undone. Afterwards the app asks Chetan to create the admin account again.',
+    body: `${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
+      ${field({ name: 'word', label: 'Type ERASE to confirm', attrs: 'autocapitalize="characters" autocomplete="off"' })}`,
+    ok: 'Erase everything',
+    async onSubmit(v, form) {
+      if (!setErrors(form, { pin: validate.required(v.pin), word: v.word.trim().toUpperCase() === 'ERASE' ? '' : 'Type ERASE' })) return false;
+      await S.eraseAll(v.pin);
+      return true;
+    }
+  }).then(ok => { if (ok) { ME = null; toast('Everything erased. Create the admin account.', 'ok', 6000); location.hash = '#/'; go(); } });
+}
+
 // Sign-in. The front door has an Employee tab and one tab per manager.
 // Chetan's admin door is a separate screen (#/control). Open it by pressing
 // and holding the Yuken logo for 2 seconds, or by going to the address.
@@ -227,6 +243,7 @@ function viewLogin(managers, control) {
         <button class="btn primary lg" type="submit" id="go">Sign in</button>
         <button type="button" class="linkbtn" id="forgot">Forgot password? Reset it with the master PIN</button>
       </form>
+      ${control ? `<button type="button" class="linkbtn danger-link" id="erase">${icon('trash')} Start fresh on this device</button><br>` : ''}
       ${control ? `<a class="linkbtn back" href="#/login">${icon('back')} Back to staff sign-in</a>` : ''}
       <p class="login-foot">${esc(SETTINGS.company)} · ${esc(SETTINGS.docTitle)}${SETTINGS.plant ? ' · ' + esc(SETTINGS.plant) : ''}</p></div>`),
     bind() {
@@ -302,6 +319,7 @@ function viewLogin(managers, control) {
           return S.masterReset(v.login, v.pin, v.next);
         }
       }).then(u => { if (u) { toast(`Password reset for ${u.name}. Username: ${u.username}`, 'ok', 8000); if (!mgr) $('#f_username').value = u.username; $('#pw').focus(); } });
+      $('#erase')?.addEventListener('click', eraseDialog);
       $('#f').onsubmit = async e => {
         e.preventDefault();
         const v = formData(e.target);
@@ -643,14 +661,22 @@ route(/^\/scan\/(\w+)$/, async id => {
 
       const openCam = async () => {
         $('#cam').hidden = false;
-        $('#cam').innerHTML = `<div class="camera"><div id="reader"></div><div class="frame"></div></div>`;
+        $('#cam').innerHTML = `<div class="camera"><div id="reader"></div><div class="frame"></div>
+          <button type="button" class="btn primary capture" id="capBtn">${icon('camera')} Capture</button></div>`;
         $('#camBtn').innerHTML = `${icon('x')}<span>Stop</span>`;
         try {
           cam = await startCamera('reader', code => {
             const box = $('#cam .camera'); box?.classList.remove('hit'); void box?.offsetWidth; box?.classList.add('hit');
             add(code, 'camera');
           });
-          say('Camera is on. Point it at each box label — it beeps when a box is captured.');
+          say('Camera is on. Point it at each box label — it beeps when a box is captured. Not beeping? Tap Capture.');
+          $('#capBtn').onclick = async e => {
+            const btn = e.currentTarget; btn.classList.add('busy');
+            const code = await cam?.capture().catch(() => null);
+            btn.classList.remove('busy');
+            if (code) { const box = $('#cam .camera'); box?.classList.remove('hit'); void box?.offsetWidth; box?.classList.add('hit'); add(code, 'camera'); }
+            else { beep('bad'); say('Could not read that label. Hold the phone closer and steady, with light on the label, then tap Capture again. Or type the box number in the box below.', 'bad'); }
+          };
         }
         catch (err) { $('#cam').hidden = true; $('#camBtn').innerHTML = `${icon('camera')}<span>Camera</span>`; say('Camera unavailable — ' + esc(err?.message || 'permission denied') + '. Allow the camera in the browser settings, or use the barcode gun.', 'bad'); }
       };
@@ -1269,6 +1295,7 @@ route(/^\/admin\/settings$/, async () => {
             <button class="btn primary" id="bk">${icon(googleOn() ? 'cloud' : 'download')} ${googleOn() ? 'Back up to Google Drive' : 'Download backup'}</button>
             ${googleOn() ? `<button class="btn" id="rsd">${icon('upload')} Restore from Google Drive</button><button class="btn ghost" id="bkf">${icon('download')} Download a copy</button>` : ''}
             <label class="btn">${icon('upload')} Restore from file<input type="file" accept=".json" id="rs" class="sr"></label>
+            <button class="btn ghost danger" id="erase">${icon('trash')} Erase everything</button>
             <button class="btn" id="demo">${icon('play')} Load demo data</button>
           </div></div></div>
       </div></main>`),
@@ -1296,6 +1323,7 @@ route(/^\/admin\/settings$/, async () => {
         }
       }).then(ok => ok && toast('Master PIN changed'));
       $('#bk').onclick = e => backupNow(e.currentTarget);
+      $('#erase').onclick = eraseDialog;
       $('#bkf')?.addEventListener('click', async () => {
         const { download } = await import('./util.js');
         download(new Blob([JSON.stringify(await S.backup())], { type: 'application/json' }), `yuken-backup-${fmt.isoDate(Date.now())}.json`);

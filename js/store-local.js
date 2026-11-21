@@ -1,5 +1,5 @@
 // Data store for the single dock computer (IndexedDB in this browser).
-import { db, uid } from './db.js';
+import { db, uid, STORES } from './db.js';
 import { MASTER_PIN } from './config.js';
 import { hashPassword } from './util.js';
 import { parseScan } from './parse.js';
@@ -335,6 +335,15 @@ export async function masterReset(login, pin, password) {
   await db.put('users', u);
   await log({ id: u.id, name: 'Master PIN' }, 'user.reset', `${u.name} (${u.empNo})`);
   return u;
+}
+
+// Start fresh: erase every account, list and setting on this device.
+export async function eraseAll(pin) {
+  await checkPin(pin);
+  for (const st of STORES) await db.clear(st);
+  ['yk.session', 'yk.who'].forEach(k => { try { localStorage.removeItem(k); } catch { /* ignore */ } });
+  for (const k of Object.keys(localStorage)) if (k.startsWith('yk.') && k !== 'yk.theme') localStorage.removeItem(k);
+  ready = null;
 }
 
 export async function changeMasterPin(current, next, actor) {

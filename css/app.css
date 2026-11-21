@@ -676,3 +676,6 @@ a.kpi.link:hover { border-color: var(--yuken); transform: translateY(-2px); }
 .t.db td { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
 #tabs { flex-wrap: wrap; display: inline-flex; }
 #tabs small { opacity: .7; margin-left: 4px; }
+.camera .capture { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3; border-radius: 999px; padding: 0 22px; height: 48px; box-shadow: 0 8px 24px -8px rgba(0, 0, 0, .6); }
+.linkbtn.danger-link { color: var(--bad); display: inline-flex; gap: 6px; align-items: center; margin-top: 14px; }
+.linkbtn.danger-link svg { width: 16px; height: 16px; }

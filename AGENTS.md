@@ -77,6 +77,11 @@ avatar on every page. Its code is in `accountDrawer()` in `js/app.js`.
 - Chetan and managers stay signed in until they press Sign out. Employees are signed out after a 14-hour shift (`SHIFT_MS` in `common.js`).
 - Older data with role `admin` is changed on load: the first admin becomes `super` and the rest become `manager` (`migrate()` in `store-local.js`).
 
+## Start fresh
+
+Control room → **Start fresh on this device** (or Settings → Erase everything): master PIN + type ERASE.
+Deletes every account, list and setting on that device (`eraseAll` in `store-local.js`) and returns to first-time setup.
+
 ## Master PIN
 
 This is the emergency key for when someone forgets their password, including Chetan. On the sign-in screen, tap
