@@ -115,7 +115,7 @@ export async function setupAdmin(data, password) {
 
 export async function resetPassword(p, password, actor) {
   const u = await db.get('users', p.id);
-  Object.assign(u, await hashPassword(password), { mustChangePassword: true, updatedAt: Date.now(), updatedBy: actor.name });
+  Object.assign(u, await hashPassword(password), { needsPassword: false, mustChangePassword: true, updatedAt: Date.now(), updatedBy: actor.name });
   await db.put('users', u);
   await log(actor, 'user.reset', `${u.name} (${u.empNo})`);
 }
@@ -134,6 +134,7 @@ export async function login(username, password) {
   const a = attempts[key] || { n: 0, until: 0 };
   if (Date.now() < a.until) throw new Error(`Too many attempts. Try again in ${Math.ceil((a.until - Date.now()) / 1000)} s.`);
   const u = await findUser(username);
+  if (u && (u.needsPassword || !u.hash)) throw new Error('No password yet. Open your tab on the sign-in screen and choose one.');
   if (!u || (await hashPassword(password, u.salt)).hash !== u.hash) {
     if (++a.n >= 5) { a.until = Date.now() + 30000; a.n = 0; }
     attempts[key] = a;
@@ -141,6 +142,22 @@ export async function login(username, password) {
   }
   if (!u.active) throw new Error('This account is disabled. Ask Chetan to enable it.');
   delete attempts[key];
+  return startSession(u, 'password');
+}
+
+// Manager tabs on the sign-in screen: names only, nothing sensitive.
+export async function managersForLogin() {
+  return (await db.all('users')).filter(u => u.role === 'manager' && u.active)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map(u => ({ id: u.id, name: u.name, username: u.username, designation: u.designation, needsPassword: !!u.needsPassword || !u.hash }));
+}
+// A manager Chetan created chooses their own password the first time.
+export async function firstPassword(id, password) {
+  const u = await db.get('users', id);
+  if (!u || u.role !== 'manager' || !(u.needsPassword || !u.hash)) throw new Error('This account already has a password. Sign in with it.');
+  Object.assign(u, await hashPassword(password), { needsPassword: false, mustChangePassword: false, updatedAt: Date.now(), updatedBy: u.name });
+  await db.put('users', u);
+  await log(u, 'user.update', 'set own password');
   return startSession(u, 'password');
 }
 
@@ -313,7 +330,7 @@ export async function masterReset(login, pin, password) {
   const u = await findUser(login);
   await checkPin(pin);
   if (!u) throw new Error('No account with that username or employee no.');
-  Object.assign(u, await hashPassword(password), { mustChangePassword: false, active: true, updatedAt: Date.now(), updatedBy: 'Master PIN' });
+  Object.assign(u, await hashPassword(password), { needsPassword: false, mustChangePassword: false, active: true, updatedAt: Date.now(), updatedBy: 'Master PIN' });
   await db.put('users', u);
   await log({ id: u.id, name: 'Master PIN' }, 'user.reset', `${u.name} (${u.empNo})`);
   return u;

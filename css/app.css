@@ -660,3 +660,14 @@ a.kpi.link:hover { border-color: var(--yuken); transform: translateY(-2px); }
 }
 .me-btn b, .me-btn span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mtop .grow { flex: 1; }
+/* sign-in: manager card, admin control room */
+.who-card { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: var(--r-ctl); background: var(--panel-2); border: 1px solid var(--line-2); margin-bottom: 18px; max-width: 400px; }
+.who-card b { display: block; } .who-card span { color: var(--mute); font-size: 13px; }
+.ctl-badge { display: inline-flex; gap: 8px; align-items: center; padding: 7px 12px; border-radius: 999px; background: var(--amber-wash); color: var(--amber); font-weight: 700; font-size: 13px; margin-bottom: 18px; }
+.ctl-badge svg { width: 16px; height: 16px; }
+.ctl { border-left: 3px solid var(--amber); padding-left: 22px; }
+.ctl .btn.primary { background: linear-gradient(180deg, #F0A93B, #D8891A); border-color: #D8891A; color: #1A1206; }
+.linkbtn.back { display: inline-flex; gap: 6px; align-items: center; margin-top: 18px; }
+.linkbtn.back svg { width: 16px; height: 16px; }
+.check span b { color: var(--text); } .check small { display: block; margin-top: 2px; }
+.login-art .brand { touch-action: manipulation; -webkit-user-select: none; user-select: none; }

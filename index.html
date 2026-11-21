@@ -24,7 +24,7 @@
       var el = document.getElementById('bootart'), n = 0, bars = '▌▐▌▌▐▐▌▐▌▌▐▌▐▐▌▌▐▌▐▐▌';
       function tick() {
         var w = 22, p = n % (w + 6), line = '';
-        for (var i = 0; i < w; i++) line += i === p ? '█' : bars[i];
+        for (var i = 0; i < w; i++) line += i === p ? '█' : bars[i % bars.length];
         el.textContent = '  Y U K E N   I N D I A\n\n  ' + line + '\n  ' + ' '.repeat(Math.min(p, w)) + '^\n\n  reading label ' + '.'.repeat(n % 4);
         n++;
       }

@@ -11,6 +11,10 @@ const TOUCH = matchMedia('(pointer: coarse)').matches;
 const isAdmin = u => u?.role === 'manager' || u?.role === 'super';   // sees everything
 const isSuper = u => u?.role === 'super';                            // changes everything
 const ROLE_NAME = { super: 'Admin', manager: 'Manager', employee: 'Employee' };
+// Full details (weights, vehicle, driver, photo) in previews, PDFs, Excel and shares.
+// Chetan always; managers by default; employees only when Chetan allows it.
+const canSeeDetails = u => isSuper(u) || (u?.seeDetails ?? u?.role === 'manager');
+const outView = d => canSeeDetails(ME.user) ? d : X.limitView(d);
 
 // ---------- light / dark ----------
 const theme = () => document.documentElement.dataset.theme || 'dark';
@@ -48,7 +52,11 @@ async function route_() {
 
   if (!(await S.hasAdmin())) return render(viewSetup());
   ME = await S.currentSession();
-  if (!ME) { if (hash !== '/login') history.replaceState(null, '', '#/login'); return render(viewLogin()); }
+  if (!ME) {
+    const door = hash === '/control' ? 'control' : 'login';
+    if (hash !== '/' + door) history.replaceState(null, '', '#/' + door);
+    return render(viewLogin(await S.managersForLogin(), door === 'control'));
+  }
   if (ME.user.mustChangePassword) return render(viewChangePassword(true));
 
   for (const r of routes) {
@@ -194,89 +202,114 @@ function viewSetup() {
 }
 
 // ---------- sign in ----------
-function viewLogin() {
+// Sign-in. The front door has an Employee tab and one tab per manager.
+// Chetan's admin door is a separate screen (#/control). Open it by pressing
+// and holding the Yuken logo for 2 seconds, or by going to the address.
+function viewLogin(managers, control) {
+  const pw = (id = 'pw', label = 'Password', ac = 'current-password', name = 'password') => `<div class="field" data-field="${name}"><label for="${id}">${label}</label>
+    <div class="pw"><input class="input" id="${id}" name="${name}" type="password" autocomplete="${ac}">
+    <button type="button" data-eye aria-label="Show password">${icon('eye')}</button></div><div class="msg"></div></div>`;
+  const head = control
+    ? `<div class="ctl-badge">${icon('lock')} Control room</div>
+       <h1>Admin sign-in</h1><p>For Chetan only. Full control of lists, people, activity and backups.</p>
+       ${googleOn() ? `<button type="button" class="btn lg google" id="g">${icon('google')} Sign in with Google</button><p class="or">or use your password</p>` : ''}`
+    : `${managers.length ? `<div class="seg" role="tablist" id="who"><button type="button" role="tab" class="on" data-who="employee">Employee</button>${managers.map(m => `<button type="button" role="tab" data-who="${m.id}">${esc(m.name.split(' ')[0])}</button>`).join('')}</div>` : ''}
+       <h1 id="lh">Sign in to start loading</h1>
+       <p id="lp">Use the username or employee number Chetan gave you.</p>
+       <div class="who-card" id="mcard" hidden></div>`;
   return {
-    html: stage(`
-      <div class="seg" role="tablist" id="who">
-        <button type="button" role="tab" class="on" data-who="employee">Employee</button>
-        <button type="button" role="tab" data-who="manager">Manager</button>
-        <button type="button" role="tab" data-who="super">Admin</button>
-      </div>
-      <h1 id="lh">Sign in to start loading</h1>
-      <p id="lp">Use the username or employee number Chetan gave you.</p>
-      <div id="gbox" hidden>${googleOn() ? `<button type="button" class="btn lg google" id="g">${icon('google')} Sign in with Google</button><p class="or">or use your password</p>` : ''}</div>
+    html: stage(`<div class="${control ? 'ctl' : ''}">${head}
       <form id="f" novalidate>
-        ${field({ name: 'username', label: 'Username or employee no.', attrs: 'autocapitalize="none" autocomplete="username" autofocus' })}
-        <div class="field" data-field="password"><label for="pw">Password</label>
-          <div class="pw"><input class="input" id="pw" name="password" type="password" autocomplete="current-password">
-          <button type="button" data-eye aria-label="Show password">${icon('eye')}</button></div><div class="msg"></div></div>
+        <div id="uwrap">${field({ name: 'username', label: 'Username or employee no.', attrs: 'autocapitalize="none" autocomplete="username" autofocus' })}</div>
+        <div id="pwrap">${pw()}</div>
+        <div id="nwrap" hidden>${pw('pw2', 'Type it again', 'new-password', 'again')}</div>
         <div id="err"></div>
-        <button class="btn primary lg" type="submit">Sign in</button>
+        <button class="btn primary lg" type="submit" id="go">Sign in</button>
         <button type="button" class="linkbtn" id="forgot">Forgot password? Reset it with the master PIN</button>
       </form>
-      <p class="login-foot">${esc(SETTINGS.company)} · ${esc(SETTINGS.docTitle)}${SETTINGS.plant ? ' · ' + esc(SETTINGS.plant) : ''}</p>`),
+      ${control ? `<a class="linkbtn back" href="#/login">${icon('back')} Back to staff sign-in</a>` : ''}
+      <p class="login-foot">${esc(SETTINGS.company)} · ${esc(SETTINGS.docTitle)}${SETTINGS.plant ? ' · ' + esc(SETTINGS.plant) : ''}</p></div>`),
     bind() {
       mountStage();
-      // Three doors: Employee, Manager (view only) and Admin (Chetan, full control).
-      // An account only opens through its own door.
-      const TEXT = {
-        employee: ['Sign in to start loading', 'Use the username or employee number Chetan gave you.'],
-        manager: ['Manager sign-in', 'See every list, the dashboard and the activity log. You stay signed in until you press Sign out.'],
-        super: ['Admin sign-in', 'Full control of the app. For Chetan only.']
+      // Hidden admin door: hold the logo for 2 seconds.
+      const logo = document.querySelector('.login-art .brand');
+      if (logo && !control) {
+        let t;
+        const start = () => { t = setTimeout(() => { beep('ok'); location.hash = '#/control'; }, 2000); };
+        const stop = () => clearTimeout(t);
+        logo.addEventListener('pointerdown', start); ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => logo.addEventListener(ev, stop));
+        logo.addEventListener('contextmenu', e => e.preventDefault());
+      }
+      let mgr = null;   // the manager tab that is open, or null for Employee
+      const pick = id => {
+        mgr = managers.find(m => m.id === id) || null;
+        $$('#who button').forEach(b => b.classList.toggle('on', b.dataset.who === (mgr ? mgr.id : 'employee')));
+        $('#uwrap').hidden = !!mgr;
+        $('#mcard').hidden = !mgr;
+        $('#nwrap').hidden = !(mgr && mgr.needsPassword);
+        $('#err').innerHTML = '';
+        if (mgr) {
+          $('#lh').textContent = mgr.needsPassword ? `Welcome, ${mgr.name.split(' ')[0]}` : 'Manager sign-in';
+          $('#lp').textContent = mgr.needsPassword ? 'Chetan made your account. Choose your password to finish.' : 'View every list, the dashboard and the activity log. You stay signed in until you press Sign out.';
+          $('#mcard').innerHTML = `<div class="avatar">${initials(mgr.name)}</div><div><b>${esc(mgr.name)}</b><span>${esc(mgr.designation || 'Manager')}</span></div>`;
+          $('#pwrap label').textContent = mgr.needsPassword ? 'New password' : 'Password';
+          $('#go').textContent = mgr.needsPassword ? 'Save password and sign in' : 'Sign in';
+          $('#pw').focus();
+        } else if (!control) {
+          $('#lh').textContent = 'Sign in to start loading';
+          $('#lp').textContent = 'Use the username or employee number Chetan gave you.';
+          $('#pwrap label').textContent = 'Password'; $('#go').textContent = 'Sign in';
+        }
+        try { localStorage.setItem('yk.who', mgr ? mgr.id : 'employee'); } catch { /* ignore */ }
       };
-      let door = 'employee';
-      const who = w => {
-        door = TEXT[w] ? w : 'employee';
-        $$('#who button').forEach(b => b.classList.toggle('on', b.dataset.who === door));
-        [$('#lh').textContent, $('#lp').textContent] = TEXT[door];
-        $('#gbox').hidden = door === 'employee';
-        try { localStorage.setItem('yk.who', door); } catch { /* ignore */ }
-      };
-      $$('#who button').forEach(b => b.onclick = () => who(b.dataset.who));
-      who(localStorage.getItem('yk.who'));
-      const DOOR_OF = { super: 'Admin', manager: 'Manager', employee: 'Employee' };
+      $$('#who button').forEach(b => b.onclick = () => pick(b.dataset.who));
+      if (!control) pick(localStorage.getItem('yk.who'));
       const checkDoor = async me => {
-        if (me.user.role === door) return me;
+        const need = control ? 'super' : mgr ? 'manager' : 'employee';
+        if (me.user.role === need && (!mgr || me.user.id === mgr.id)) return me;
         await S.logout();
-        throw new Error(`This is ${me.user.role === 'super' ? 'the admin' : 'a' + (me.user.role === 'employee' ? 'n employee' : ' manager')} account. Use the ${DOOR_OF[me.user.role]} tab.`);
+        throw new Error(me.user.role === 'super' ? 'Username or password is incorrect.' : me.user.role === 'manager' ? 'Managers sign in on their own tab.' : 'Employees sign in on the Employee tab.');
       };
       $('#g')?.addEventListener('click', async e => {
         const btn = e.currentTarget; btn.classList.add('busy');
-        try { const g = await googleProfile(); ME = await checkDoor(await S.loginGoogle(g.email)); location.hash = isAdmin(ME.user) ? '#/admin' : '#/home'; go(); }
+        try { const g = await googleProfile(); ME = await checkDoor(await S.loginGoogle(g.email)); location.hash = '#/admin'; go(); }
         catch (err) { btn.classList.remove('busy'); $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`; }
       });
-      $('[data-eye]').onclick = e => {
-        const i = $('#pw'); const show = i.type === 'password';
+      $$('[data-eye]').forEach(eb => eb.onclick = e => {
+        const i = e.currentTarget.parentElement.querySelector('input'); const show = i.type === 'password';
         i.type = show ? 'text' : 'password';
         e.currentTarget.innerHTML = icon(show ? 'eyeOff' : 'eye');
-      };
+      });
       $('#forgot').onclick = () => formDialog({
         title: 'Reset a password',
         text: 'Chetan keeps the master PIN. It can reset anyone\'s password, including his own.',
-        body: `${field({ name: 'login', label: 'Username or employee no.', value: $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
+        body: `${field({ name: 'login', label: 'Username or employee no.', value: mgr ? mgr.username : $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
           ${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
           ${field({ name: 'next', label: 'New password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}`,
         ok: 'Reset password',
         async onSubmit(v, form) {
           if (!setErrors(form, { login: validate.required(v.login), pin: validate.required(v.pin), next: validate.password(v.next) })) return false;
-          const u = await S.masterReset(v.login, v.pin, v.next);
-          return u;
+          return S.masterReset(v.login, v.pin, v.next);
         }
-      }).then(u => { if (u) { toast(`Password reset for ${u.name}. Sign in with the new one.`); $('#f_username').value = u.username; $('#pw').focus(); } });
+      }).then(u => { if (u) { toast(`Password reset for ${u.name}. Sign in with the new one.`); if (!mgr) $('#f_username').value = u.username; $('#pw').focus(); } });
       $('#f').onsubmit = async e => {
         e.preventDefault();
         const v = formData(e.target);
-        if (!setErrors(e.target, { username: validate.required(v.username), password: validate.required(v.password) })) return;
-        const btn = e.target.querySelector('button[type=submit]'); btn.classList.add('busy');
+        const user = mgr ? mgr.username : v.username;
+        const btn = $('#go'); const fail = err => { btn.classList.remove('busy'); $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`; $('#pw').select(); };
+        if (mgr?.needsPassword) {
+          if (!setErrors(e.target, { password: validate.password(v.password), again: v.again === v.password ? '' : 'The two passwords do not match' })) return;
+          btn.classList.add('busy');
+          try { ME = await S.firstPassword(mgr.id, v.password); location.hash = '#/admin'; go(); } catch (err) { fail(err); }
+          return;
+        }
+        if (!setErrors(e.target, { username: mgr ? '' : validate.required(v.username), password: validate.required(v.password) })) return;
+        btn.classList.add('busy');
         try {
-          ME = await checkDoor(await S.login(v.username, v.password));
+          ME = await checkDoor(await S.login(user, v.password));
           location.hash = isAdmin(ME.user) ? '#/admin' : '#/home';
           go();
-        } catch (err) {
-          btn.classList.remove('busy');
-          $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`;
-          $('#pw').select();
-        }
+        } catch (err) { fail(err); }
       };
     }
   };
@@ -753,6 +786,7 @@ route(/^\/list\/(\w+)$/, async id => {
 });
 
 async function runExport(kind, d, s, b) {
+  d = outView(d);
   b?.classList.add('busy');
   try {
     if (kind === 'xlsx') { await loadScript('vendor/xlsx.full.min.js'); X.downloadExcel(d, s); toast('Excel downloaded'); }
@@ -766,10 +800,11 @@ async function runExport(kind, d, s, b) {
 
 // Full-screen preview of the A4 POL sheet, with the output actions beside it.
 function openPreview(d, s) {
+  const full = d; d = outView(d);
   const el = document.createElement('div');
   el.className = 'preview'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
   el.innerHTML = `<div class="stage"><div class="sheet">${X.sheetHTML(d, s)}</div></div>
-    <aside class="tools"><h2>POL sheet</h2><p>${esc(d.code)} · ${esc(prettyVehicle(d.vehicleNo))} · ${d.boxes.length} boxes</p>
+    <aside class="tools"><h2>${d.limited ? 'Box list' : 'POL sheet'}</h2><p>${esc(d.code)}${d.limited ? '' : ' · ' + esc(prettyVehicle(d.vehicleNo))} · ${d.boxes.length} boxes</p>${d.limited ? `<p class="mute" style="font-size:13px">Box numbers only. Ask Chetan if you need weights and vehicle details.</p>` : ''}
       <button class="btn primary" data-p="print">${icon('print')} Print</button>
       <button class="btn" data-p="pdf">${icon('pdf')} Download PDF</button>
       <button class="btn" data-p="xlsx">${icon('xls')} Download Excel</button>
@@ -1034,13 +1069,16 @@ function personDrawer(p) {
         ${field({ name: 'joinDate', label: 'Joining date', type: 'date', value: p.joinDate, opt: true, attrs: `max="${today}"` })}
         ${field({ name: 'role', label: 'Access', value: p.role, options: [['employee', 'Employee — scans and sees own lists'], ['manager', 'Manager — sees everything, changes nothing'], ['super', 'Admin — full control, like Chetan']], attrs: self ? 'disabled' : '' })}
       </div></div>
+      <div class="fgroup" id="permbox"><h3>What they can see</h3>
+        <label class="check"><input type="checkbox" name="seeDetails" ${canSeeDetails(p) && p.role !== 'super' ? 'checked' : ''}><span><b>Full details in previews, PDFs and Excel</b><small>Weights, vehicle, transport, driver and driver photo. Without this they only get the box numbers.</small></span></label>
+      </div>
       <div class="fgroup"><h3>Emergency contact</h3><div class="grid2">
         ${field({ name: 'emName', label: 'Name', value: p.emName, opt: true })}
         ${field({ name: 'emPhone', label: 'Mobile', type: 'tel', value: p.emPhone, opt: true, attrs: 'inputmode="numeric" maxlength="10"' })}
       </div></div>
       <div class="fgroup"><h3>Sign-in</h3><div class="grid2">
         ${field({ name: 'username', label: 'Username', value: p.username, attrs: 'autocapitalize="none" autocomplete="off"' })}
-        ${isNew ? field({ name: 'password', label: 'Temporary password', type: 'text', value: tempPw(), attrs: 'autocomplete="off"', hint: 'They set their own after first sign-in' }) : ro ? '' : `<div class="field"><div class="lbl">Password</div><button type="button" class="btn" data-reset>${icon('key')} Reset password</button></div>`}
+        ${isNew ? `<div id="pwbox">${field({ name: 'password', label: 'Temporary password', type: 'text', value: tempPw(), attrs: 'autocomplete="off"', hint: 'They set their own after first sign-in' })}</div><p class="mute" id="pwmgr" hidden style="margin:0;font-size:13.5px;align-self:center">No password needed. The manager picks their own on their tab on the sign-in screen.</p>` : ro ? '' : `<div class="field"><div class="lbl">Password</div><button type="button" class="btn" data-reset>${icon('key')} Reset password</button></div>`}
       </div></div>
       ${isNew ? '' : `<div class="fgroup"><h3>Record</h3><div class="audit-box">
         <div><span>Account created</span>${fmt.dt(p.createdAt)}</div>
@@ -1057,6 +1095,13 @@ function personDrawer(p) {
       const f = el.querySelector('#pf');
       el.querySelector('[data-cancel]').onclick = close;
       if (ro) return;
+      // Managers: no temporary password, and the full-details box is ticked by default.
+      const roleSync = () => {
+        const r = f.role.value;
+        el.querySelector('#permbox').hidden = r === 'super';
+        if (isNew) { el.querySelector('#pwbox').hidden = r === 'manager'; el.querySelector('#pwmgr').hidden = r !== 'manager'; f.seeDetails.checked = r === 'manager'; }
+      };
+      f.role.addEventListener('change', roleSync); roleSync();
       f.aadhaar.addEventListener('input', e => { const d = e.target.value.replace(/\D/g, '').slice(0, 12); e.target.value = d.replace(/(\d{4})(?=\d)/g, '$1 '); });
       if (isNew) f.name.addEventListener('input', () => { if (!f.username.dataset.touched) f.username.value = f.name.value.trim().toLowerCase().split(/\s+/)[0]?.replace(/[^a-z0-9]/g, '') || ''; });
       f.username.addEventListener('input', () => { f.username.dataset.touched = 1; });
@@ -1065,24 +1110,28 @@ function personDrawer(p) {
         v.username = (v.username || '').trim().toLowerCase();
         v.aadhaar = (v.aadhaar || '').replace(/\s/g, '');
         ['phone', 'altPhone', 'emPhone'].forEach(k => { v[k] = (v[k] || '').replace(/\D/g, '').slice(-10); });
+        const mgrNew = isNew && v.role === 'manager';
+        const light = (v.role || p.role) !== 'employee';   // managers and admins: fewer required fields
         const errs = {
-          name: validate.name(v.name), dob: validate.dob(v.dob), phone: validate.phone(v.phone),
+          name: validate.name(v.name), dob: light && !v.dob ? '' : validate.dob(v.dob), phone: validate.phone(v.phone),
           altPhone: v.altPhone ? validate.phone(v.altPhone) || (v.altPhone === v.phone ? 'Same as mobile number' : '') : '',
-          address: (v.address || '').trim().length >= 10 ? '' : 'Enter the full address (at least 10 characters)',
-          pincode: validate.pincode(v.pincode), aadhaar: validate.aadhaar(v.aadhaar),
+          address: light && !(v.address || '').trim() ? '' : (v.address || '').trim().length >= 10 ? '' : 'Enter the full address (at least 10 characters)',
+          pincode: light && !v.pincode ? '' : validate.pincode(v.pincode), aadhaar: validate.aadhaar(v.aadhaar),
           empNo: validate.empNo(v.empNo), designation: validate.required(v.designation),
           emPhone: v.emPhone ? validate.phone(v.emPhone) : '',
-          username: validate.username(v.username), password: isNew ? validate.password(v.password) : ''
+          username: validate.username(v.username), password: isNew && !mgrNew ? validate.password(v.password) : ''
         };
         if (!setErrors(f, errs)) return;
         const btn = e.currentTarget; btn.classList.add('busy');
-        const data = { ...p, ...v, name: v.name.trim().replace(/\s+/g, ' '), empNo: v.empNo.trim().toUpperCase(), address: v.address.trim() };
+        const data = { ...p, ...v, name: v.name.trim().replace(/\s+/g, ' '), empNo: v.empNo.trim().toUpperCase(), address: (v.address || '').trim(), seeDetails: !!v.seeDetails };
+        if (mgrNew) data.needsPassword = true;
         delete data.password;
         if (self) data.role = p.role || 'employee';
         try {
-          await S.saveUser(data, ME.user, isNew ? v.password : null);
+          await S.saveUser(data, ME.user, isNew && !mgrNew ? v.password : null);
           close();
-          if (isNew) await confirmBox({ title: `${data.name} can sign in now`, text: `Username <b class="code">${esc(data.username)}</b><br>Temporary password <b class="code">${esc(v.password)}</b><br><br>Share these with them in person. They will set their own password at first sign-in.`, ok: 'Done' });
+          if (mgrNew) await confirmBox({ title: `${data.name} is added as a manager`, text: `A <b>${esc(data.name.split(' ')[0])}</b> tab now shows on the sign-in screen. ${esc(data.name.split(' ')[0])} opens it and chooses a password. Nothing to share.`, ok: 'Done' });
+          else if (isNew) await confirmBox({ title: `${data.name} can sign in now`, text: `Username <b class="code">${esc(data.username)}</b><br>Temporary password <b class="code">${esc(v.password)}</b><br><br>Share these with them in person. They will set their own password at first sign-in.`, ok: 'Done' });
           else toast('Saved');
           go();
         } catch (err) { btn.classList.remove('busy'); toast(err.message, 'bad', 4000); }

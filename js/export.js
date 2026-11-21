@@ -2,7 +2,14 @@
 import { fmt, esc, download, prettyVehicle } from './util.js';
 import { totals } from './common.js';
 
-const fileBase = d => `${d.code}_${prettyVehicle(d.vehicleNo).replace(/\s/g, '')}`;
+const fileBase = d => d.limited ? `${d.code}_boxes` : `${d.code}_${prettyVehicle(d.vehicleNo).replace(/\s/g, '')}`;
+
+// People without the "full details" permit get a box-number-only copy of a
+// list. Nothing else leaves the app: no weights, vehicle, driver or photo.
+export const limitView = d => ({
+  id: d.id, code: d.code, status: d.status, createdAt: d.createdAt, closedAt: d.closedAt, limited: true,
+  boxes: d.boxes.map(b => ({ seq: b.seq, key: b.key, boxNo: b.boxNo || b.key, scannedAt: b.scannedAt }))
+});
 
 const boxRow = (b, d) => ({
   '#': b.seq,
@@ -22,6 +29,12 @@ const boxRow = (b, d) => ({
 // ---------- Excel ----------
 export function toExcel(d, settings) {
   const XLSX = window.XLSX;
+  if (d.limited) {
+    const ws = XLSX.utils.aoa_to_sheet([[settings.company], ['Box list'], [], ['List', d.code], ['Date', fmt.dt(d.createdAt)], ['Total boxes', d.boxes.length], [], ['#', 'Box no.'], ...d.boxes.map(b => [b.seq, b.boxNo])]);
+    ws['!cols'] = [{ wch: 8 }, { wch: 26 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Boxes');
+    return new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
   const head = [
     [settings.company],
     [settings.docTitle],
@@ -82,6 +95,7 @@ async function logoPNG() {
 const kg = n => (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export async function toPDF(d, settings) {
+  if (d.limited) return toPDFLimited(d, settings);
   d = totals({ ...d, boxes: [...d.boxes] });
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -183,13 +197,53 @@ export async function toPDF(d, settings) {
   return doc.output('blob');
 }
 
+// Box numbers only: header, list code, date, count, and a neat 3-column grid.
+async function toPDFLimited(d, settings) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const W = 210, M = 12;
+  const blue = [4, 159, 224], navy = [11, 33, 64], ink = [19, 32, 47], mute = [60, 108, 140], tint = [234, 246, 253];
+  doc.setFillColor(...navy); doc.rect(0, 0, W, 30, 'F');
+  doc.setFillColor(...blue); doc.rect(0, 30, W, 1.2, 'F');
+  try { doc.addImage(await logoPNG(), 'PNG', M, 9, 33, 9); } catch { /* logo optional */ }
+  doc.setTextColor(191, 230, 250); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.text('INDIA LIMITED', M, 23);
+  doc.setTextColor(255); doc.setFontSize(14); doc.text('Box list', 56, 15);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(191, 230, 250); doc.text(settings.company, 56, 21);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(255); doc.text(d.code, W - M, 15, { align: 'right' });
+  const cards = [['List', d.code], ['Date', fmt.dt(d.createdAt)], ['Total boxes', String(d.boxes.length)]];
+  const cw = (W - 2 * M - 2 * 3) / 3;
+  cards.forEach(([k, v], i) => {
+    const x = M + i * (cw + 3), dark = i === 2;
+    doc.setFillColor(...(dark ? navy : tint)); doc.roundedRect(x, 38, cw, 16, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...(dark ? [169, 216, 242] : mute)); doc.text(k.toUpperCase(), x + 4, 44);
+    doc.setFontSize(dark ? 14 : 10.5); doc.setTextColor(...(dark ? [255, 255, 255] : ink)); doc.text(v, x + 4, 50.5);
+  });
+  const per = 3, rows = [];
+  for (let i = 0; i < d.boxes.length; i += per) rows.push(d.boxes.slice(i, i + per).flatMap(b => [b.seq, b.boxNo]).concat(Array((per - Math.min(per, d.boxes.length - i)) * 2).fill('')));
+  const cols = {};
+  for (let c = 0; c < per; c++) { cols[c * 2] = { cellWidth: 11, halign: 'center', textColor: blue, fontStyle: 'bold' }; cols[c * 2 + 1] = { font: 'courier', fontStyle: 'bold' }; }
+  doc.autoTable({
+    startY: 61, margin: { left: M, right: M, bottom: 16 },
+    head: [Array.from({ length: per }, () => ['#', 'Box no.']).flat()],
+    body: rows.length ? rows : [[{ content: 'No boxes scanned', colSpan: per * 2, styles: { halign: 'center', textColor: mute } }]],
+    theme: 'grid', styles: { fontSize: 9.5, cellPadding: 2.4, textColor: ink, lineColor: [214, 228, 239], lineWidth: 0.2 },
+    headStyles: { fillColor: navy, textColor: 255, fontStyle: 'bold' }, alternateRowStyles: { fillColor: [245, 250, 254] }, columnStyles: cols
+  });
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...mute);
+    doc.text(`${settings.company} | Box list ${d.code}`, M, 290); doc.text(`Page ${i} of ${pages}`, W - M, 290, { align: 'right' });
+  }
+  return doc.output('blob');
+}
+
 export async function downloadPDF(d, s) { download(await toPDF(d, s), fileBase(d) + '.pdf'); }
 
 // ---------- Share ----------
 export async function share(d, s, kind = 'pdf') {
   const blob = kind === 'xlsx' ? toExcel(d, s) : await toPDF(d, s);
   const file = new File([blob], fileBase(d) + (kind === 'xlsx' ? '.xlsx' : '.pdf'), { type: blob.type || 'application/pdf' });
-  const text = `${s.company} — ${s.docTitle}\n${d.code}\nVehicle ${prettyVehicle(d.vehicleNo)} · ${d.transport}\n${d.boxes.length} boxes · ${fmt.kg(d.totalWeight)}\nBy ${d.empName} (${d.empNo}), ${fmt.dt(d.closedAt || d.createdAt)}`;
+  const text = d.limited ? `${s.company} — Box list\n${d.code} · ${d.boxes.length} boxes` : `${s.company} — ${s.docTitle}\n${d.code}\nVehicle ${prettyVehicle(d.vehicleNo)} · ${d.transport}\n${d.boxes.length} boxes · ${fmt.kg(d.totalWeight)}\nBy ${d.empName} (${d.empNo}), ${fmt.dt(d.closedAt || d.createdAt)}`;
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     await navigator.share({ files: [file], title: d.code, text });
     return 'shared';
@@ -207,14 +261,15 @@ export function sheetHTML(d, s) {
   const n = Math.max(min, Math.ceil(d.boxes.length / cols) * cols);
   const cells = Array.from({ length: n }, (_, i) => d.boxes[i]);
   const closed = d.status === 'closed';
+  const L = d.limited;
   return `<div class="ps">
     <header class="ps-band">
       <div class="lock"><img src="assets/yuken-logo-white.svg" alt="Yuken"><span>INDIA LIMITED</span></div>
-      <div class="ttl"><b>${esc(s.docTitle)}</b><span>${esc(s.company)}${s.plant ? ' &nbsp;|&nbsp; ' + esc(s.plant) : ''}</span></div>
+      <div class="ttl"><b>${L ? 'Box list' : esc(s.docTitle)}</b><span>${esc(s.company)}${s.plant ? ' &nbsp;|&nbsp; ' + esc(s.plant) : ''}</span></div>
       <div class="cd"><b>${esc(d.code)}</b><span class="${closed ? '' : 'open'}">${closed ? 'Closed' : 'Loading'}</span></div>
     </header>
     <div class="ps-body">
-      <div class="ps-meta">
+      ${L ? `<div class="ps-meta"><div><span>List</span><b>${esc(d.code)}</b></div><div><span>Date</span><b>${fmt.dt(d.createdAt)}</b></div><div><span>Total boxes</span><b>${d.boxes.length}</b></div></div>` : `<div class="ps-meta">
         <div><span>Employee</span><b>${esc(d.empName)}</b></div>
         <div><span>Employee no.</span><b>${esc(d.empNo)}</b></div>
         <div><span>Login time</span><b>${fmt.dt(d.loginAt)}</b></div>
@@ -223,15 +278,15 @@ export function sheetHTML(d, s) {
         <div><span>Started</span><b>${fmt.dt(d.createdAt)}</b></div>
         <div><span>Location</span><b>${esc(d.location)}</b></div>
         <div><span>Driver</span><b>${esc([d.driverName, d.driverPhone].filter(Boolean).join(', ') || '—')}</b></div>
-      </div>
+      </div>`}
       <div class="ps-h"><b>Master boxes loaded</b><span>Scanned ${fmt.dt(d.boxes[0]?.scannedAt)} to ${fmt.time(d.boxes.at(-1)?.scannedAt)}</span></div>
       <div class="ps-grid">${cells.map((b, i) => `<div class="${b ? '' : 'blank'} ${Math.floor(i / cols) % 2 ? 'alt' : ''}"><i>${i + 1}</i>${b ? `<span>${esc(b.boxNo || b.raw)}</span>${b.weight != null ? `<em>${kg(b.weight)}</em>` : ''}` : ''}</div>`).join('')}</div>
-      <div class="ps-foot">
+      ${L ? '' : `<div class="ps-foot">
         <div class="ps-tot"><span>Total boxes</span><b>${d.boxes.length}</b></div>
         <div class="ps-tot"><span>Total weight${d.weightEntered != null ? ' (weighbridge)' : ''}</span><b>${kg(d.totalWeight)} kg</b>${d.weightEntered != null ? `<small>Labels: ${kg(d.labelWeight)} kg</small>` : ''}</div>
         <div class="ps-photo">${d.driverPhoto ? `<img src="${d.driverPhoto}" alt="">` : '<em>No driver photo</em>'}<span>Driver photo</span></div>
       </div>
-      <div class="ps-sign"><div>Loaded by</div><div>Driver</div><div>Security</div></div>
+      `}<div class="ps-sign"><div>Loaded by</div><div>Driver</div><div>Security</div></div>
     </div>
     <footer class="ps-gen"><span>${esc(s.company)} &nbsp;|&nbsp; ${esc(s.docTitle)}</span><span>Generated ${fmt.dt(Date.now())}</span></footer>
   </div>`;

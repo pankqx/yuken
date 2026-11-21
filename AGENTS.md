@@ -48,7 +48,8 @@ The camera needs `https://` or `localhost`. Use the hosted link on phones.
 
 | Route | Page | Who |
 |---|---|---|
-| `#/login` | Sign in. Three tabs: Employee, Manager, Admin. Each account only opens on its own tab (`checkDoor`). Google button on Manager and Admin when set up | Everyone |
+| `#/login` | Staff sign-in: an Employee tab plus one tab per manager (`managersForLogin`). A manager Chetan created picks their own password on their tab (`firstPassword`). No admin option here | Employees, managers |
+| `#/control` | Admin sign-in ("Control room"). Open it by holding the Yuken logo on the sign-in screen for 2 seconds, or by typing the address. Only the `super` account gets in | Chetan |
 | `#/home` | Employee home: my open and closed lists | Employees |
 | `#/new` | New list: vehicle, transport, location, driver, driver photo | Admin, employees |
 | `#/scan/:id` | Scanning screen (barcode gun or camera) | Admin, list owner |
@@ -79,8 +80,14 @@ avatar on every page. Its code is in `accountDrawer()` in `js/app.js`.
 
 This is the emergency key for when someone forgets their password, including Chetan. On the sign-in screen, tap
 "Forgot password? Reset it with the master PIN" and enter the username, the master PIN and a new password.
-Only a salted hash is stored (`js/config.js`). Chetan changes it in Settings → Master PIN. Five wrong tries
+Only a salted hash is stored (`js/config.js`). Never write the PIN itself in this repo, because the repo is public. Chetan changes it in Settings → Master PIN. Five wrong tries
 lock it for 10 minutes. It cannot be used for anything else.
+
+## Full details vs box numbers only
+
+`canSeeDetails(u)` in `js/app.js`: Chetan always; managers by default; employees only when Chetan ticks
+**Full details in previews, PDFs and Excel** on their People page. Without it, `X.limitView(d)` is used
+for preview, print, PDF, Excel and share. That copy has only the list code, date, count and box numbers.
 
 ## Weights
 
