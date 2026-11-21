@@ -3,6 +3,7 @@ import { db, uid, STORES } from './db.js';
 import { MASTER_PIN } from './config.js';
 import { hashPassword } from './util.js';
 import { parseScan } from './parse.js';
+import { ADMIN } from './config.js';
 import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, totals, renumber, demoLists, DEMO_PEOPLE, DEMO_PASSWORD, dayKey, listCode } from './common.js';
 
 const SESSION_KEY = 'yk.session';
@@ -13,16 +14,54 @@ export const isAdmin = u => u?.role === 'manager' || u?.role === 'super';   // c
 export const isSuper = u => u?.role === 'super';                            // can change everything
 
 let ready;
+const ADMIN_ID = 'u-admin';
+const ADMIN_LOCK = 'yk.adminlock';
+async function ensureAdmin() {
+  let u = await db.get('users', ADMIN_ID);
+  if (!u) {
+    u = { id: ADMIN_ID, role: 'super', name: ADMIN.name, username: 'admin', empNo: 'ADMIN', designation: 'Administrator', googleEmail: ADMIN.email, active: true, createdAt: Date.now(), createdBy: 'system' };
+    await db.put('users', u);
+  }
+  return u;
+}
+const adminRecord = async () => (await db.get('settings', 'adminpw')) || ADMIN;
+
+// Admin sign-in: the admin password only. Five wrong tries lock it for 10 minutes.
+export async function adminLogin(password) {
+  const lock = JSON.parse(localStorage.getItem(ADMIN_LOCK) || '{"n":0,"until":0}');
+  if (Date.now() < lock.until) throw new Error(`Too many wrong tries. Try again in ${Math.ceil((lock.until - Date.now()) / 60000)} min.`);
+  const rec = await adminRecord();
+  if ((await hashPassword(String(password), rec.salt, rec.iterations)).hash !== rec.hash) {
+    lock.n++; if (lock.n >= 5) { lock.until = Date.now() + 10 * 60000; lock.n = 0; }
+    localStorage.setItem(ADMIN_LOCK, JSON.stringify(lock));
+    throw new Error('Admin password is incorrect.');
+  }
+  localStorage.removeItem(ADMIN_LOCK);
+  return startSession(await ensureAdmin(), 'password');
+}
+async function setAdminPassword(next, by) {
+  const iterations = 310000;
+  const { salt, hash } = await hashPassword(String(next), null, iterations);
+  await db.put('settings', { id: 'adminpw', salt, hash, iterations, changedAt: Date.now(), changedBy: by });
+}
+export async function changeAdminPassword(current, next, actor) {
+  const rec = await adminRecord();
+  if ((await hashPassword(String(current), rec.salt, rec.iterations)).hash !== rec.hash) throw new Error('Current admin password is incorrect.');
+  await setAdminPassword(next, actor.name);
+  await log(actor, 'user.update', 'changed the admin password');
+}
 export const init = () => (ready ||= migrate());
 async function migrate() {
   const all = await db.all('users');
-  // Older data: the first 'admin' becomes the super admin, other admins become managers.
-  if (!all.some(u => u.role === 'super')) {
-    const first = all.filter(u => u.role === 'admin').sort((a, b) => a.createdAt - b.createdAt)[0];
-    if (first) first.role = 'super';
+  // Only one admin exists: the built-in Chetan account (ADMIN_ID). Any other
+  // admin from older versions or testing is turned into a disabled manager.
+  for (const u of all) {
+    if (u.role === 'admin' || (u.role === 'super' && u.id !== ADMIN_ID)) {
+      if (u.role === 'super') u.active = false;
+      u.role = 'manager';
+      await db.put('users', u);
+    }
   }
-  for (const u of all) if (u.role === 'admin') u.role = 'manager';
-  for (const u of all) await db.put('users', u);
   // Weights read by the old parser are read again from the saved label text.
   if (!(await db.get('settings', 'migr-weight-2'))) {
     for (const d of await db.all('dispatches')) {
@@ -92,6 +131,7 @@ function assertUnique(all, data) {
 }
 
 export async function saveUser(data, actor, password) {
+  if (data.role === 'super' && data.id !== ADMIN_ID) throw new Error('There is only one admin: Chetan.');
   const all = await db.all('users');
   assertUnique(all, data);
   const now = Date.now();
@@ -108,10 +148,7 @@ export async function saveUser(data, actor, password) {
   return user;
 }
 
-export async function setupAdmin(data, password) {
-  await saveUser({ ...data, role: 'super' }, null, password);
-  return login(data.username, password);
-}
+
 
 export async function resetPassword(p, password, actor) {
   const u = await db.get('users', p.id);
@@ -134,6 +171,7 @@ export async function login(username, password) {
   const a = attempts[key] || { n: 0, until: 0 };
   if (Date.now() < a.until) throw new Error(`Too many attempts. Try again in ${Math.ceil((a.until - Date.now()) / 1000)} s.`);
   const u = await findUser(username);
+  if (u?.role === 'super') throw new Error('Username or password is incorrect.');
   if (u && (u.needsPassword || !u.hash)) throw new Error('No password yet. Open your tab on the sign-in screen and choose one.');
   if (!u || (await hashPassword(password, u.salt)).hash !== u.hash) {
     if (++a.n >= 5) { a.until = Date.now() + 30000; a.n = 0; }
@@ -164,6 +202,7 @@ export async function firstPassword(id, password) {
 // Google sign-in: the Gmail address must be linked to an account first.
 export async function loginGoogle(email) {
   const e = String(email || '').toLowerCase();
+  if (e === ADMIN.email.toLowerCase()) return startSession(await ensureAdmin(), 'google');
   const u = (await db.all('users')).find(x => x.googleEmail === e);
   if (!u) throw Object.assign(new Error(`${email} is not linked to an account yet.`), { code: 'unlinked', email: e });
   if (!u.active) throw new Error('This account is disabled.');
@@ -328,9 +367,14 @@ async function checkPin(pin) {
 
 export async function masterReset(login, pin, password) {
   await checkPin(pin);
-  // Empty username = the admin (Chetan), for when he forgets his username too.
-  const u = String(login || '').trim() ? await findUser(login) : (await db.all('users')).find(x => x.role === 'super');
-  if (!u) throw new Error('No account with that username or employee no.');
+  // Empty username = the admin password (Chetan).
+  if (!String(login || '').trim()) {
+    await setAdminPassword(password, 'Master PIN');
+    await log({ id: ADMIN_ID, name: 'Master PIN' }, 'user.reset', 'admin password');
+    return { name: 'Chetan (admin)', username: '' };
+  }
+  const u = await findUser(login);
+  if (!u || u.role === 'super') throw new Error('No account with that username or employee no.');
   Object.assign(u, await hashPassword(password), { needsPassword: false, mustChangePassword: false, active: true, updatedAt: Date.now(), updatedBy: 'Master PIN' });
   await db.put('users', u);
   await log({ id: u.id, name: 'Master PIN' }, 'user.reset', `${u.name} (${u.empNo})`);

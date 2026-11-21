@@ -50,7 +50,6 @@ async function route_() {
   await S.init();
   SETTINGS = await S.getSettings();
 
-  if (!(await S.hasAdmin())) return render(viewSetup());
   ME = await S.currentSession();
   if (!ME) {
     const door = hash === '/control' ? 'control' : 'login';
@@ -154,52 +153,6 @@ function mountStage() {
 }
 
 // ---------- first run ----------
-function viewSetup() {
-  return {
-    html: stage(`
-      <h1>Set up the admin account</h1>
-      <p>This is Chetan's account. It controls everything: managers, employees, the activity log, settings and backups. You do this once.</p>
-      ${googleOn() ? `<button type="button" class="btn lg google" id="g">${icon('google')} Fill in with Google</button><p class="or">or type the details</p>` : ''}
-      <form id="f" novalidate>
-        <div class="grid2">
-          ${field({ name: 'name', label: 'Full name', attrs: 'autocomplete="name"' })}
-          ${field({ name: 'empNo', label: 'Employee no.', cls: 'code' })}
-        </div>
-        ${field({ name: 'phone', label: 'Mobile number', type: 'tel', attrs: 'inputmode="numeric" maxlength="10"' })}
-        ${field({ name: 'username', label: 'Username', attrs: 'autocapitalize="none" autocomplete="username"', hint: 'Used to sign in, e.g. chetan' })}
-        ${field({ name: 'password', label: 'Password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number. You use this every time after today.' })}
-        <input type="hidden" name="googleEmail">
-        <div class="linked" id="linked" hidden></div>
-        <button class="btn primary lg" type="submit">Create admin account</button>
-      </form>`),
-    bind() {
-      mountStage();
-      $('#g')?.addEventListener('click', async () => {
-        try {
-          const g = await googleProfile();
-          const f = $('#f');
-          f.googleEmail.value = g.email;
-          if (!f.name.value) f.name.value = g.name || '';
-          if (!f.username.value) f.username.value = g.email.split('@')[0].toLowerCase().replace(/[^a-z0-9._]/g, '');
-          $('#linked').hidden = false; $('#linked').innerHTML = `${icon('check')} Google account <b>${esc(g.email)}</b> will be linked. Next time you can also sign in with Google.`;
-        } catch (err) { toast(err.message, 'bad', 5000); }
-      });
-      $('#f').onsubmit = async e => {
-        e.preventDefault();
-        const v = formData(e.target);
-        v.username = v.username.trim().toLowerCase();
-        const errs = { name: validate.name(v.name), empNo: validate.empNo(v.empNo), phone: validate.phone(v.phone), username: validate.username(v.username), password: validate.password(v.password) };
-        if (!setErrors(e.target, errs)) return;
-        const btn = e.target.querySelector('button[type=submit]'); btn.classList.add('busy');
-        try {
-          await S.setupAdmin({ name: v.name.trim(), empNo: v.empNo.trim().toUpperCase(), phone: v.phone.replace(/\D/g, '').slice(-10), username: v.username, designation: 'Administrator', googleEmail: v.googleEmail ? v.googleEmail.toLowerCase() : null }, v.password);
-        } catch (err) { btn.classList.remove('busy'); return toast(err.message, 'bad', 5000); }
-        toast('Admin account created. You stay signed in until you press Sign out.', 'ok', 5000);
-        location.hash = '#/admin'; go();
-      };
-    }
-  };
-}
 
 // ---------- sign in ----------
 // Wipe the device and go back to first-time setup. Needs the master PIN.
@@ -227,17 +180,20 @@ function viewLogin(managers, control) {
     <button type="button" data-eye aria-label="Show password">${icon('eye')}</button></div><div class="msg"></div></div>`;
   const head = control
     ? `<div class="ctl-badge">${icon('lock')} Control room</div>
-       <h1>Admin sign-in</h1><p>For Chetan only. Full control of lists, people, activity and backups.</p>
+       <h1>Admin sign-in</h1><p>For Chetan only. Enter the admin password, or sign in with Chetan's Google account.</p>
        ${googleOn() ? `<button type="button" class="btn lg google" id="g">${icon('google')} Sign in with Google</button><p class="or">or use your password</p>` : ''}`
-    : `${managers.length ? `<div class="seg" role="tablist" id="who"><button type="button" role="tab" class="on" data-who="employee">Employee</button>${managers.map(m => `<button type="button" role="tab" data-who="${m.id}">${esc(m.name.split(' ')[0])}</button>`).join('')}</div>` : ''}
+    : `<div class="users" role="tablist" id="who">
+         <button type="button" role="tab" class="on" data-who="employee"><span class="uicon">${icon('users')}</span><b>Employee</b><small>Loading staff</small></button>
+         ${managers.map(m => `<button type="button" role="tab" data-who="${m.id}"><span class="uicon">${initials(m.name)}</span><b>${esc(m.name.split(' ')[0])}</b><small>${m.needsPassword ? 'New — set password' : 'Manager'}</small></button>`).join('')}
+       </div>
        <h1 id="lh">Sign in to start loading</h1>
        <p id="lp">Use the username or employee number Chetan gave you.</p>
        <div class="who-card" id="mcard" hidden></div>`;
   return {
     html: stage(`<div class="${control ? 'ctl' : ''}">${head}
       <form id="f" novalidate>
-        <div id="uwrap">${field({ name: 'username', label: 'Username or employee no.', attrs: 'autocapitalize="none" autocomplete="username" autofocus' })}</div>
-        <div id="pwrap">${pw()}</div>
+        <div id="uwrap" ${control ? 'hidden' : ''}>${field({ name: 'username', label: 'Username or employee no.', attrs: 'autocapitalize="none" autocomplete="username" autofocus' })}</div>
+        <div id="pwrap">${pw('pw', control ? 'Admin password' : 'Password')}</div>
         <div id="nwrap" hidden>${pw('pw2', 'Type it again', 'new-password', 'again')}</div>
         <div id="err"></div>
         <button class="btn primary lg" type="submit" id="go">Sign in</button>
@@ -294,7 +250,8 @@ function viewLogin(managers, control) {
         try { const g = await googleProfile(); ME = await checkDoor(await S.loginGoogle(g.email)); location.hash = '#/admin'; go(); }
         catch (err) {
           btn.classList.remove('busy');
-          if (err.code === 'unlinked') {
+          if (err.code === 'unlinked' && control) $('#err').innerHTML = `<div class="form-err">${esc(err.email)} is not Chetan's Google account. Only Chetan can sign in here.</div>`;
+          else if (err.code === 'unlinked') {
             linkEmail = err.email;
             $('#err').innerHTML = `<div class="linked">${icon('google')}<span><b>${esc(err.email)}</b> is not linked yet. Type your ${mgr ? '' : 'username and '}password once below. It will be linked, and next time Google is enough.</span></div>`;
             $('#go').textContent = 'Sign in and link Google';
@@ -308,9 +265,9 @@ function viewLogin(managers, control) {
         e.currentTarget.innerHTML = icon(show ? 'eyeOff' : 'eye');
       });
       $('#forgot').onclick = () => formDialog({
-        title: 'Reset a password',
+        title: control ? 'Reset the admin password' : 'Reset a password',
         text: 'Chetan keeps the master PIN. It can reset anyone\'s password, including his own.',
-        body: `${field({ name: 'login', label: control ? 'Username (leave empty to reset the admin)' : 'Username or employee no.', value: mgr ? mgr.username : $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
+        body: `${control ? '<input type="hidden" name="login" value="">' : field({ name: 'login', label: 'Username or employee no.', value: mgr ? mgr.username : $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
           ${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
           ${field({ name: 'next', label: 'New password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}`,
         ok: 'Reset password',
@@ -318,7 +275,7 @@ function viewLogin(managers, control) {
           if (!setErrors(form, { login: control ? '' : validate.required(v.login), pin: validate.required(v.pin), next: validate.password(v.next) })) return false;
           return S.masterReset(v.login, v.pin, v.next);
         }
-      }).then(u => { if (u) { toast(`Password reset for ${u.name}. Username: ${u.username}`, 'ok', 8000); if (!mgr) $('#f_username').value = u.username; $('#pw').focus(); } });
+      }).then(u => { if (u) { toast(u.username ? `Password reset for ${u.name}. Username: ${u.username}` : 'Admin password changed. Sign in with the new one.', 'ok', 8000); if (!mgr && u.username) $('#f_username').value = u.username; $('#pw').focus(); } });
       $('#erase')?.addEventListener('click', eraseDialog);
       $('#f').onsubmit = async e => {
         e.preventDefault();
@@ -331,10 +288,10 @@ function viewLogin(managers, control) {
           try { ME = await S.firstPassword(mgr.id, v.password); location.hash = '#/admin'; go(); } catch (err) { fail(err); }
           return;
         }
-        if (!setErrors(e.target, { username: mgr ? '' : validate.required(v.username), password: validate.required(v.password) })) return;
+        if (!setErrors(e.target, { username: mgr || control ? '' : validate.required(v.username), password: validate.required(v.password) })) return;
         btn.classList.add('busy');
         try {
-          ME = await checkDoor(await S.login(user, v.password));
+          ME = await checkDoor(control ? await S.adminLogin(v.password) : await S.login(user, v.password));
           if (linkEmail) {
             try { await S.linkGoogle(ME.user, linkEmail); toast(`Google linked: ${linkEmail}. Next time just tap Sign in with Google.`, 'ok', 6000); }
             catch (err) { toast(err.message, 'bad', 6000); }
@@ -948,7 +905,7 @@ function accountDrawer() {
       <dl class="kv" style="margin-bottom:20px"><dt>Signed in</dt><dd>${fmt.dt(ME.session.loginAt)}${ME.session.via === 'google' ? ' with Google' : ''}</dd>
         <dt>Stays signed in</dt><dd>${isAdmin(u) ? 'Until you press Sign out' : 'Until the end of the shift'}</dd></dl>
       <div class="fgroup"><h3>Look</h3><button class="btn" data-theme-btn-row type="button">${icon(theme() === 'light' ? 'moon' : 'sun')} ${theme() === 'light' ? 'Use dark mode' : 'Use light mode'}</button></div>
-      ${googleOn() && isAdmin(u) ? `<div class="fgroup"><h3>Google sign-in</h3>${u.googleEmail ? `<p class="mute" style="margin:0 0 10px">Linked to <b>${esc(u.googleEmail)}</b></p><button class="btn" id="unlink">Remove Google link</button>` : `<p class="mute" style="margin:0 0 10px">Link your Gmail to sign in with one tap.</p><button class="btn google" id="link">${icon('google')} Link my Google account</button>`}</div>` : ''}
+      ${googleOn() && u.role === 'manager' ? `<div class="fgroup"><h3>Google sign-in</h3>${u.googleEmail ? `<p class="mute" style="margin:0 0 10px">Linked to <b>${esc(u.googleEmail)}</b></p><button class="btn" id="unlink">Remove Google link</button>` : `<p class="mute" style="margin:0 0 10px">Link your Gmail to sign in with one tap.</p><button class="btn google" id="link">${icon('google')} Link my Google account</button>`}</div>` : ''}
       <div class="fgroup"><h3>Change password</h3><form id="cp" style="display:grid;gap:14px" novalidate>
         ${field({ name: 'cur', label: 'Current password', type: 'password' })}${field({ name: 'next', label: 'New password', type: 'password', hint: 'At least 8 characters with a letter and a number' })}${field({ name: 'again', label: 'Type it again', type: 'password' })}
         <div><button class="btn primary">Save password</button></div></form></div>`,
@@ -964,7 +921,7 @@ function accountDrawer() {
         e.preventDefault();
         const f = e.target; const v = formData(f);
         if (!setErrors(f, { cur: validate.required(v.cur), next: validate.password(v.next), again: v.again === v.next ? '' : 'Passwords do not match' })) return;
-        try { await S.changePassword(u, v.cur, v.next); close(); toast('Password changed'); } catch (err) { setErrors(f, { cur: err.message }); }
+        try { await (isSuper(u) ? S.changeAdminPassword(v.cur, v.next, u) : S.changePassword(u, v.cur, v.next)); close(); toast(isSuper(u) ? 'Admin password changed on this device' : 'Password changed'); } catch (err) { setErrors(f, { cur: err.message }); }
       };
     }
   });
@@ -1107,7 +1064,7 @@ function personDrawer(p) {
         ${field({ name: 'designation', label: 'Designation', value: p.designation, attrs: 'list="desig"' })}
         <datalist id="desig"><option>Loader</option><option>Dispatch Supervisor</option><option>Store Assistant</option><option>Security</option><option>Contract Worker</option></datalist>
         ${field({ name: 'joinDate', label: 'Joining date', type: 'date', value: p.joinDate, opt: true, attrs: `max="${today}"` })}
-        ${field({ name: 'role', label: 'Access', value: p.role, options: [['employee', 'Employee — scans and sees own lists'], ['manager', 'Manager — sees everything, changes nothing'], ['super', 'Admin — full control, like Chetan']], attrs: self ? 'disabled' : '' })}
+        ${field({ name: 'role', label: 'Access', value: p.role, options: p.role === 'super' ? [['super', 'Admin — Chetan']] : [['employee', 'Employee — scans and sees own lists'], ['manager', 'Manager — sees everything, changes nothing']], attrs: self || p.role === 'super' ? 'disabled' : '' })}
       </div></div>
       <div class="fgroup" id="permbox"><h3>What they can see</h3>
         <label class="check"><input type="checkbox" name="seeDetails" ${canSeeDetails(p) && p.role !== 'super' ? 'checked' : ''}><span><b>Full details in previews, PDFs and Excel</b><small>Weights, vehicle, transport, driver and driver photo. Without this they only get the box numbers.</small></span></label>

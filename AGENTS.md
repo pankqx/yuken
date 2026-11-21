@@ -77,10 +77,18 @@ avatar on every page. Its code is in `accountDrawer()` in `js/app.js`.
 - Chetan and managers stay signed in until they press Sign out. Employees are signed out after a 14-hour shift (`SHIFT_MS` in `common.js`).
 - Older data with role `admin` is changed on load: the first admin becomes `super` and the rest become `manager` (`migrate()` in `store-local.js`).
 
+## The one admin
+
+- There is no setup screen. The admin (Chetan) is built in: `ADMIN` in `js/config.js` holds his name, Gmail and a salted hash of the admin password.
+- Signing in on the Control room (`#/control`) with that password, or with Google as `ADMIN.email`, creates the admin account on that device (`ensureAdmin`, id `u-admin`) if it is missing.
+- Nobody can create another admin: `saveUser` refuses role `super`, and `migrate()` turns any other old admin into a disabled manager.
+- Chetan changes the admin password in his account panel (kept on that device as `settings.adminpw`). The master PIN resets it: Control room → Forgot password.
+- Never write the admin password itself in this repo.
+
 ## Start fresh
 
 Control room → **Start fresh on this device** (or Settings → Erase everything): master PIN + type ERASE.
-Deletes every account, list and setting on that device (`eraseAll` in `store-local.js`) and returns to first-time setup.
+Deletes every account, list and setting on that device (`eraseAll` in `store-local.js`) and returns to the sign-in screen. The built-in admin is recreated the next time Chetan signs in.
 
 ## Master PIN
 
@@ -135,7 +143,7 @@ The app only asks for `drive.file`, so it can see only the files it made itself.
 
 ## Quick test
 
-1. Open in a private window. Create the admin (Chetan).
+1. Open in a private window. Go to `#/control` and sign in with the admin password.
 2. People → Add person → Access: Manager. Sign out, then sign in as the manager. Settings and New list should be hidden.
 3. As admin: New list → fill the details → take the photo → scan
    `PS Box Num: 4270036177-1 Box Weight: 28.7` and press Enter. The total should show 28.7.

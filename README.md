@@ -19,7 +19,7 @@ A web app for Yuken India Limited's finished-goods dispatch dock. Employees scan
 
 ## Who can do what
 
-The first account created on a device is the admin (Chetan). He adds managers and employees from **People → Add person**.
+There is exactly one admin, Chetan, and it is built in: there is no setup screen and nobody can create another admin. He signs in on the hidden Control room (hold the Yuken logo for 2 seconds, or open `#/control`) with the admin password or his Google account, then adds managers and employees from **People → Add person**.
 
 ## How it runs at the dock
 

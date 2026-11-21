@@ -10,6 +10,19 @@ export const MASTER_PIN = {
   iterations: 310000
 };
 
+// ADMIN — there is exactly one admin: Chetan. Nobody can create another one.
+// Sign in as admin on any device with this password (only its hash is here),
+// or with Google using the Gmail below. Chetan can change the password in
+// Settings → Admin password (kept on that device). Forgot it? The master PIN
+// resets it: Control room → Forgot password → leave the username empty.
+export const ADMIN = {
+  name: 'Chetan',
+  email: 'chethu6424@gmail.com',
+  salt: '74cff3fcb9051ffdea57ca65d26a5c4f',
+  hash: 'f37f4310b6d761052a84ab61e74db22fa735f7844974b3132f1c51f537bd4e69',
+  iterations: 310000
+};
+
 // GOOGLE — one free "OAuth client ID" turns on two things:
 //   1. "Sign in with Google" for Chetan (and anyone whose Gmail is linked)
 //   2. "Back up to Google Drive" (files go to a "Yuken POL backups" folder)
