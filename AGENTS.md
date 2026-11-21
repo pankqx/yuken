@@ -58,6 +58,7 @@ The camera needs `https://` or `localhost`. Use the hosted link on phones.
 | `#/admin/lists` | All lists with search and filters (`?open` = loading now) | Admin, managers |
 | `#/admin/people` | People (`?add` opens the add form) | Admin edits, managers view |
 | `#/admin/activity` | Activity log with filters | Admin edits, managers view |
+| `#/admin/data` | Database viewer: every table (lists, boxes, people, activity, settings), searchable, download all as Excel. Read-only; password hashes are never shown | Admin only |
 | `#/admin/settings` | Printout header, rules, transporters, locations, master PIN, backups | Admin only |
 
 The account panel (password, light/dark, Google link, sign out) opens from the

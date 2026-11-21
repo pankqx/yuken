@@ -671,3 +671,8 @@ a.kpi.link:hover { border-color: var(--yuken); transform: translateY(-2px); }
 .linkbtn.back svg { width: 16px; height: 16px; }
 .check span b { color: var(--text); } .check small { display: block; margin-top: 2px; }
 .login-art .brand { touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+.db-wrap { max-height: 65vh; overflow: auto; }
+.t.db th { position: sticky; top: 0; z-index: 1; white-space: nowrap; }
+.t.db td { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+#tabs { flex-wrap: wrap; display: inline-flex; }
+#tabs small { opacity: .7; margin-left: 4px; }

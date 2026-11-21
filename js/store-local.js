@@ -327,8 +327,9 @@ async function checkPin(pin) {
 }
 
 export async function masterReset(login, pin, password) {
-  const u = await findUser(login);
   await checkPin(pin);
+  // Empty username = the admin (Chetan), for when he forgets his username too.
+  const u = String(login || '').trim() ? await findUser(login) : (await db.all('users')).find(x => x.role === 'super');
   if (!u) throw new Error('No account with that username or employee no.');
   Object.assign(u, await hashPassword(password), { needsPassword: false, mustChangePassword: false, active: true, updatedAt: Date.now(), updatedBy: 'Master PIN' });
   await db.put('users', u);

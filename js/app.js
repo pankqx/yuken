@@ -293,15 +293,15 @@ function viewLogin(managers, control) {
       $('#forgot').onclick = () => formDialog({
         title: 'Reset a password',
         text: 'Chetan keeps the master PIN. It can reset anyone\'s password, including his own.',
-        body: `${field({ name: 'login', label: 'Username or employee no.', value: mgr ? mgr.username : $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
+        body: `${field({ name: 'login', label: control ? 'Username (leave empty to reset the admin)' : 'Username or employee no.', value: mgr ? mgr.username : $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
           ${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
           ${field({ name: 'next', label: 'New password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}`,
         ok: 'Reset password',
         async onSubmit(v, form) {
-          if (!setErrors(form, { login: validate.required(v.login), pin: validate.required(v.pin), next: validate.password(v.next) })) return false;
+          if (!setErrors(form, { login: control ? '' : validate.required(v.login), pin: validate.required(v.pin), next: validate.password(v.next) })) return false;
           return S.masterReset(v.login, v.pin, v.next);
         }
-      }).then(u => { if (u) { toast(`Password reset for ${u.name}. Sign in with the new one.`); if (!mgr) $('#f_username').value = u.username; $('#pw').focus(); } });
+      }).then(u => { if (u) { toast(`Password reset for ${u.name}. Username: ${u.username}`, 'ok', 8000); if (!mgr) $('#f_username').value = u.username; $('#pw').focus(); } });
       $('#f').onsubmit = async e => {
         e.preventDefault();
         const v = formData(e.target);
@@ -1242,7 +1242,7 @@ route(/^\/admin\/settings$/, async () => {
   render({
     html: adminShell('#/admin/settings', `<main class="page">
       <div class="page-head"><div><h1>Settings</h1><p>Printouts, drop-down lists, backups and the master PIN. Only Chetan sees this page.</p></div>
-        <div class="actions"><a class="btn" href="#/admin/activity">${icon('activity')} Activity log</a></div></div>
+        <div class="actions"><a class="btn" href="#/admin/data">${icon('list')} View database</a><a class="btn" href="#/admin/activity">${icon('activity')} Activity log</a></div></div>
       <div class="settings-grid">
         <div class="panel"><div class="panel-head"><h2>Printout header</h2></div><form class="panel-body" id="hf" style="display:grid;gap:14px">
           ${field({ name: 'company', label: 'Company name', value: s.company })}
@@ -1337,6 +1337,60 @@ route(/^\/admin\/settings$/, async () => {
     }
   });
 }, { super: true });
+// ======================================================================
+// Admin: the whole database, read-only, table by table (Chetan only)
+// ======================================================================
+route(/^\/admin\/data$/, async () => {
+  const all = await S.backup();
+  const cell = v => v == null || v === '' ? '' : typeof v === 'string' && v.startsWith('data:image') ? '[photo]'
+    : typeof v === 'number' && v > 1e12 && v < 4e12 ? fmt.dt(v) : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  const SECRET = ['hash', 'salt', 'iterations'];   // password hashes never shown
+  const TABLES = {
+    lists: { name: 'Loading lists', rows: all.dispatches.map(({ boxes, driverPhoto, ...d }) => ({ ...d, boxes: boxes.length, driverPhoto: driverPhoto ? '[photo]' : '' })) },
+    boxes: { name: 'Boxes', rows: all.dispatches.flatMap(d => d.boxes.map(b => ({ list: d.code, vehicle: prettyVehicle(d.vehicleNo), ...b }))) },
+    people: { name: 'People', rows: all.users.map(u => Object.fromEntries(Object.entries(u).filter(([k]) => !SECRET.includes(k)))) },
+    activity: { name: 'Activity', rows: [...all.audit].sort((a, b) => b.at - a.at) },
+    settings: { name: 'Settings', rows: all.settings.filter(s => s.id !== 'master').map(s => ({ ...s })) }
+  };
+  for (const t of Object.values(TABLES)) t.cols = [...new Set(t.rows.flatMap(r => Object.keys(r)))];
+  let tab = 'lists';
+  render({
+    html: adminShell('#/admin/settings', `<main class="page">
+      <div class="page-head"><div><h1>Database</h1><p>Everything stored on this device, table by table. Read-only. Passwords are never shown.</p></div>
+        <div class="actions"><a class="btn ghost" href="#/admin/settings">${icon('back')} Settings</a><button class="btn primary" id="xl">${icon('download')} Download all as Excel</button></div></div>
+      <div class="seg" id="tabs">${Object.entries(TABLES).map(([k, t]) => `<button type="button" data-t="${k}" class="${k === tab ? 'on' : ''}">${t.name} <small>${t.rows.length}</small></button>`).join('')}</div>
+      <div class="panel">
+        <div class="toolbar"><div class="search">${icon('search')}<input class="input" id="q" placeholder="Search this table"></div><span class="mute" id="count" style="font-size:13px"></span></div>
+        <div class="table-wrap db-wrap"><table class="t db"><thead id="head"></thead><tbody id="rows"></tbody></table></div>
+      </div></main>`),
+    bind() {
+      const draw = () => {
+        const t = TABLES[tab], q = $('#q').value.trim().toLowerCase();
+        const list = t.rows.filter(r => !q || t.cols.some(c => cell(r[c]).toLowerCase().includes(q)));
+        $('#head').innerHTML = `<tr>${t.cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`;
+        $('#rows').innerHTML = list.slice(0, 500).map(r => `<tr>${t.cols.map(c => `<td title="${esc(cell(r[c]))}">${esc(cell(r[c]))}</td>`).join('')}</tr>`).join('')
+          || `<tr><td colspan="${t.cols.length || 1}"><div class="empty"><b>Nothing here</b></div></td></tr>`;
+        $('#count').textContent = `${list.length} row${list.length === 1 ? '' : 's'}${list.length > 500 ? ' (first 500 shown — download for all)' : ''}`;
+      };
+      $$('#tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; $$('#tabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+      $('#q').addEventListener('input', draw);
+      $('#xl').onclick = async e => {
+        const btn = e.currentTarget; btn.classList.add('busy');
+        try {
+          const { loadScript } = await import('./camera.js'); await loadScript('vendor/xlsx.full.min.js');
+          const wb = XLSX.utils.book_new();
+          for (const t of Object.values(TABLES)) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(t.rows.map(r => Object.fromEntries(t.cols.map(c => [c, cell(r[c])])))), t.name.slice(0, 31));
+          const { download } = await import('./util.js');
+          download(new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })]), `yuken-database-${fmt.isoDate(Date.now())}.xlsx`);
+          toast('Database downloaded as Excel');
+        } catch (err) { toast(err.message, 'bad'); }
+        btn.classList.remove('busy');
+      };
+      draw();
+    }
+  });
+}, { super: true });
+
 
 // ---------- boot ----------
 const hideBoot = () => { const b = $('#boot'); if (!b) return; setTimeout(() => { b.classList.add('gone'); clearInterval(window.__boot); setTimeout(() => b.remove(), 450); }, 350); };
