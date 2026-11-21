@@ -165,7 +165,7 @@ export async function firstPassword(id, password) {
 export async function loginGoogle(email) {
   const e = String(email || '').toLowerCase();
   const u = (await db.all('users')).find(x => x.googleEmail === e);
-  if (!u) throw new Error(`${email} is not linked to any account. Sign in with your password, then link Google in Settings.`);
+  if (!u) throw Object.assign(new Error(`${email} is not linked to an account yet.`), { code: 'unlinked', email: e });
   if (!u.active) throw new Error('This account is disabled.');
   return startSession(u, 'google');
 }

@@ -270,10 +270,20 @@ function viewLogin(managers, control) {
         await S.logout();
         throw new Error(me.user.role === 'super' ? 'Username or password is incorrect.' : me.user.role === 'manager' ? 'Managers sign in on their own tab.' : 'Employees sign in on the Employee tab.');
       };
+      // A Gmail that is not linked yet: sign in once with the password and it is linked.
+      let linkEmail = null;
       $('#g')?.addEventListener('click', async e => {
         const btn = e.currentTarget; btn.classList.add('busy');
         try { const g = await googleProfile(); ME = await checkDoor(await S.loginGoogle(g.email)); location.hash = '#/admin'; go(); }
-        catch (err) { btn.classList.remove('busy'); $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`; }
+        catch (err) {
+          btn.classList.remove('busy');
+          if (err.code === 'unlinked') {
+            linkEmail = err.email;
+            $('#err').innerHTML = `<div class="linked">${icon('google')}<span><b>${esc(err.email)}</b> is not linked yet. Type your ${mgr ? '' : 'username and '}password once below. It will be linked, and next time Google is enough.</span></div>`;
+            $('#go').textContent = 'Sign in and link Google';
+            (mgr ? $('#pw') : $('#f_username')).focus();
+          } else $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`;
+        }
       });
       $$('[data-eye]').forEach(eb => eb.onclick = e => {
         const i = e.currentTarget.parentElement.querySelector('input'); const show = i.type === 'password';
@@ -307,6 +317,10 @@ function viewLogin(managers, control) {
         btn.classList.add('busy');
         try {
           ME = await checkDoor(await S.login(user, v.password));
+          if (linkEmail) {
+            try { await S.linkGoogle(ME.user, linkEmail); toast(`Google linked: ${linkEmail}. Next time just tap Sign in with Google.`, 'ok', 6000); }
+            catch (err) { toast(err.message, 'bad', 6000); }
+          }
           location.hash = isAdmin(ME.user) ? '#/admin' : '#/home';
           go();
         } catch (err) { fail(err); }
