@@ -110,7 +110,7 @@ The app only asks for `drive.file`, so it can see only the files it made itself.
 
 ## Rules for changes
 
-- **Commits are authored as `K S Pankaj <17rhytms@gmail.com>`, with no co-author lines.**
+- **Commits are authored as `K S Pankaj <pankqx@gmail.com>`, with no co-author lines.**
 - Keep it build-free: no frameworks or bundlers. A new library goes in `vendor/` and is loaded with `loadScript()`.
 - Write interface text in plain, short English. Buttons say what they do ("Close list", not "Submit").
 - Every data change goes through `store-local.js` and writes a line with `log()`.
