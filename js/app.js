@@ -198,8 +198,9 @@ function viewLogin() {
   return {
     html: stage(`
       <div class="seg" role="tablist" id="who">
-        <button type="button" role="tab" class="on" data-who="staff">Employee</button>
-        <button type="button" role="tab" data-who="boss">Manager or admin</button>
+        <button type="button" role="tab" class="on" data-who="employee">Employee</button>
+        <button type="button" role="tab" data-who="manager">Manager</button>
+        <button type="button" role="tab" data-who="super">Admin</button>
       </div>
       <h1 id="lh">Sign in to start loading</h1>
       <p id="lp">Use the username or employee number Chetan gave you.</p>
@@ -216,18 +217,32 @@ function viewLogin() {
       <p class="login-foot">${esc(SETTINGS.company)} · ${esc(SETTINGS.docTitle)}${SETTINGS.plant ? ' · ' + esc(SETTINGS.plant) : ''}</p>`),
     bind() {
       mountStage();
+      // Three doors: Employee, Manager (view only) and Admin (Chetan, full control).
+      // An account only opens through its own door.
+      const TEXT = {
+        employee: ['Sign in to start loading', 'Use the username or employee number Chetan gave you.'],
+        manager: ['Manager sign-in', 'See every list, the dashboard and the activity log. You stay signed in until you press Sign out.'],
+        super: ['Admin sign-in', 'Full control of the app. For Chetan only.']
+      };
+      let door = 'employee';
       const who = w => {
-        $$('#who button').forEach(b => b.classList.toggle('on', b.dataset.who === w));
-        $('#lh').textContent = w === 'boss' ? 'Manager and admin sign-in' : 'Sign in to start loading';
-        $('#lp').textContent = w === 'boss' ? 'You stay signed in on this device until you press Sign out.' : 'Use the username or employee number Chetan gave you.';
-        $('#gbox').hidden = w !== 'boss';
-        try { localStorage.setItem('yk.who', w); } catch { /* ignore */ }
+        door = TEXT[w] ? w : 'employee';
+        $$('#who button').forEach(b => b.classList.toggle('on', b.dataset.who === door));
+        [$('#lh').textContent, $('#lp').textContent] = TEXT[door];
+        $('#gbox').hidden = door === 'employee';
+        try { localStorage.setItem('yk.who', door); } catch { /* ignore */ }
       };
       $$('#who button').forEach(b => b.onclick = () => who(b.dataset.who));
-      who(localStorage.getItem('yk.who') || 'staff');
+      who(localStorage.getItem('yk.who'));
+      const DOOR_OF = { super: 'Admin', manager: 'Manager', employee: 'Employee' };
+      const checkDoor = async me => {
+        if (me.user.role === door) return me;
+        await S.logout();
+        throw new Error(`This is ${me.user.role === 'super' ? 'the admin' : 'a' + (me.user.role === 'employee' ? 'n employee' : ' manager')} account. Use the ${DOOR_OF[me.user.role]} tab.`);
+      };
       $('#g')?.addEventListener('click', async e => {
         const btn = e.currentTarget; btn.classList.add('busy');
-        try { const g = await googleProfile(); ME = await S.loginGoogle(g.email); location.hash = isAdmin(ME.user) ? '#/admin' : '#/home'; go(); }
+        try { const g = await googleProfile(); ME = await checkDoor(await S.loginGoogle(g.email)); location.hash = isAdmin(ME.user) ? '#/admin' : '#/home'; go(); }
         catch (err) { btn.classList.remove('busy'); $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`; }
       });
       $('[data-eye]').onclick = e => {
@@ -254,7 +269,7 @@ function viewLogin() {
         if (!setErrors(e.target, { username: validate.required(v.username), password: validate.required(v.password) })) return;
         const btn = e.target.querySelector('button[type=submit]'); btn.classList.add('busy');
         try {
-          ME = await S.login(v.username, v.password);
+          ME = await checkDoor(await S.login(v.username, v.password));
           location.hash = isAdmin(ME.user) ? '#/admin' : '#/home';
           go();
         } catch (err) {

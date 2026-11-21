@@ -48,7 +48,7 @@ The camera needs `https://` or `localhost`. Use the hosted link on phones.
 
 | Route | Page | Who |
 |---|---|---|
-| `#/login` | Sign in. Tabs: Employee / Manager or admin. Google button when set up | Everyone |
+| `#/login` | Sign in. Three tabs: Employee, Manager, Admin. Each account only opens on its own tab (`checkDoor`). Google button on Manager and Admin when set up | Everyone |
 | `#/home` | Employee home: my open and closed lists | Employees |
 | `#/new` | New list: vehicle, transport, location, driver, driver photo | Admin, employees |
 | `#/scan/:id` | Scanning screen (barcode gun or camera) | Admin, list owner |
@@ -74,6 +74,13 @@ avatar on every page. Its code is in `accountDrawer()` in `js/app.js`.
 - Every sign-in and sign-out is written to Activity for everyone.
 - Chetan and managers stay signed in until they press Sign out. Employees are signed out after a 14-hour shift (`SHIFT_MS` in `common.js`).
 - Older data with role `admin` is changed on load: the first admin becomes `super` and the rest become `manager` (`migrate()` in `store-local.js`).
+
+## Master PIN
+
+This is the emergency key for when someone forgets their password, including Chetan. On the sign-in screen, tap
+"Forgot password? Reset it with the master PIN" and enter the username, the master PIN and a new password.
+Only a salted hash is stored (`js/config.js`). Chetan changes it in Settings → Master PIN. Five wrong tries
+lock it for 10 minutes. It cannot be used for anything else.
 
 ## Weights
 
