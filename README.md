@@ -69,3 +69,7 @@ vendor/                  three.js, SheetJS, jsPDF, html5-qrcode (bundled so the 
 - **Employees**: start lists and scan. They are signed out at the end of a shift.
 
 See **AGENTS.md** for the file map, the pages, how weights work and how to turn on Google sign-in and Google Drive backup.
+
+## Online version
+
+Fill `FIREBASE` in `js/config.js` and publish `firestore.rules` in the Firebase console. Then every phone and laptop with the link shares the same accounts and loading lists, and only accounts Chetan creates can sign in. Details in **AGENTS.md → Online version**.

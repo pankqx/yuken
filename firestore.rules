@@ -1,0 +1,108 @@
+rules_version = '2';
+
+// Yuken POL — who may read and write what in the online database.
+// Paste this whole file into Firebase console → Firestore Database → Rules → Publish.
+//
+// Only Chetan (his verified Gmail) is the admin. He creates every account.
+// Anyone can create an empty Firebase sign-in with the public web key, but
+// without a matching account record from Chetan it can read nothing here.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isSuper() {
+      return signedIn() && request.auth.token.email == 'chethu6424@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+    function memberDoc() { return get(/databases/$(database)/documents/members/$(request.auth.uid)); }
+    function isMember() {
+      return isSuper() || (signedIn()
+        && exists(/databases/$(database)/documents/members/$(request.auth.uid))
+        && memberDoc().data.active == true);
+    }
+    function isStaff() { return isSuper() || (isMember() && memberDoc().data.role == 'manager'); }
+    function canLoad() { return isSuper() || (isMember() && memberDoc().data.role == 'employee'); }
+    function myName() { return isSuper() ? 'admin' : memberDoc().data.username; }
+    function loginOf(u) { return get(/databases/$(database)/documents/logins/$(u)).data; }
+
+    // App settings and the last-backup note. Company name shows on the sign-in screen.
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isSuper();
+    }
+
+    // Public sign-in directory: names, roles and the hidden sign-in email only.
+    match /logins/{username} {
+      allow read: if true;
+      allow create, delete: if isSuper();
+      allow update: if isSuper() || (
+        signedIn()
+        && request.auth.token.email == resource.data.authEmail
+        && resource.data.needsPassword == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['needsPassword', 'uid'])
+        && request.resource.data.needsPassword == false
+        && request.resource.data.uid == request.auth.uid);
+    }
+
+    // Links a Firebase sign-in to an account. A person creates their own link
+    // only once, the first time they set their password, and only with the
+    // role Chetan gave them.
+    match /members/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
+      allow create: if isSuper() || (
+        signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['username', 'role', 'active'])
+        && request.resource.data.active == true
+        && request.resource.data.role in ['employee', 'manager']
+        && loginOf(request.resource.data.username).authEmail == request.auth.token.email
+        && loginOf(request.resource.data.username).role == request.resource.data.role
+        && loginOf(request.resource.data.username).needsPassword == true
+        && loginOf(request.resource.data.username).active == true);
+      allow update, delete: if isSuper();
+    }
+
+    // Full profiles (phone, address, Aadhaar). Staff see everyone; a person sees themself.
+    match /people/{username} {
+      allow read: if isStaff() || (isMember() && myName() == username);
+      allow create, delete: if isSuper();
+      allow update: if isSuper() || (
+        isMember() && myName() == username
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['lastLogin', 'needsPassword', 'uid', 'mustChangePassword', 'updatedAt', 'googleEmail']));
+    }
+
+    // Loading lists. Employees see and change only their own, and only while open.
+    match /dispatches/{id} {
+      allow read: if isStaff() || (isMember() && resource.data.createdBy == myName());
+      allow create: if canLoad() && request.resource.data.createdBy == myName();
+      allow update: if isSuper() || (
+        canLoad() && resource.data.createdBy == myName() && resource.data.status == 'open'
+        && request.resource.data.createdBy == resource.data.createdBy);
+      allow delete: if isSuper();
+    }
+
+    match /photos/{id} {
+      allow read: if isStaff() || (isMember() && resource.data.createdBy == myName());
+      allow create: if canLoad() && request.resource.data.createdBy == myName();
+      allow update, delete: if isSuper();
+    }
+
+    // Box → list index for the "already loaded on another vehicle" check.
+    match /boxIndex/{key} {
+      allow read: if isMember();
+      allow create, update, delete: if canLoad();
+    }
+
+    // Number of lists per day, for POL-YYYYMMDD-001 codes.
+    match /counters/{day} {
+      allow read, write: if canLoad();
+    }
+
+    // Activity log: everyone writes their own lines; only staff read; only Chetan edits.
+    match /audit/{id} {
+      allow read: if isStaff();
+      allow create: if isMember() && request.resource.data.by == myName();
+      allow update, delete: if isSuper();
+    }
+  }
+}

@@ -10,7 +10,9 @@ master-box labels into a loading list for each vehicle. Then they close the
 list and print, download (PDF or Excel) or share it.
 
 - Plain HTML, CSS and JavaScript (ES modules). **No build step, no npm, no server.**
-- Data is kept in the browser (IndexedDB) on the device that runs the app.
+- **Two modes**, picked in `js/store.js`:
+  - **Online (Firebase)** when `FIREBASE.apiKey` in `js/config.js` is filled. One shared database: every phone and laptop with the link sees the same people and lists. Code: `js/store-firebase.js`, `js/fb.js`, rules in `firestore.rules`.
+  - **This device only** when it is empty. Data stays in the browser (IndexedDB). Code: `js/store-local.js`.
 - It is hosted as static files (GitHub Pages or Vercel).
 - Backups go to Google Drive (when Google is turned on) or to a downloaded file.
 
@@ -30,7 +32,11 @@ The camera needs `https://` or `localhost`. Use the hosted link on phones.
 | `css/app.css` | All styling. Dark theme on `:root`, light theme on `[data-theme="light"]`. The print/PDF sheet styles start at `.ps` | Colours, spacing, light mode |
 | `js/app.js` | **Every screen.** Router at the top, then one `route(...)` block per page (search for the `// ===` banners) | Changing what a page shows or does |
 | `js/store-local.js` | All data: users, sessions, lists, boxes, activity, backups, master PIN | Changing how data is saved or who may do what |
-| `js/store.js` | One line that picks the data store | Swapping to a cloud database later |
+| `js/store.js` | Picks the data store: Firebase if configured, else this device | Rarely |
+| `js/store-firebase.js` | Online data store (Firebase Auth + Firestore). Same functions as `store-local.js` | Changing online data or sign-in |
+| `js/fb.js` | Connects to Firebase (`?emu=1` uses local test servers) | Rarely |
+| `firestore.rules` | Who may read and write what online. Paste into Firebase console → Firestore → Rules | Changing permissions |
+| `vendor/firebase.js` | Firebase SDK bundle (esbuild of firebase@11, only the functions used) | Upgrading Firebase |
 | `js/common.js` | Shared rules: totals (box count and weight), duplicate check, list codes, demo data, default settings | Totals or default settings |
 | `js/parse.js` | Turns a scanned label into fields (`parseScan`, `parseWeight`) | A new label format, or weights reading wrong |
 | `js/camera.js` | Camera scanning (html5-qrcode), driver photo, script loader | Camera behaviour |
@@ -76,6 +82,15 @@ avatar on every page. Its code is in `accountDrawer()` in `js/app.js`.
 - Every sign-in and sign-out is written to Activity for everyone.
 - Chetan and managers stay signed in until they press Sign out. Employees are signed out after a 14-hour shift (`SHIFT_MS` in `common.js`).
 - Older data with role `admin` is changed on load: the first admin becomes `super` and the rest become `manager` (`migrate()` in `store-local.js`).
+
+## Online version (Firebase)
+
+- **Accounts:** only Chetan creates them (People → Add person). There is no password to hand out: the person signs in with their username (managers tap their tile) and **chooses their own password the first time**, on any phone or computer.
+- How it works: `logins/{username}` (public: name, role, hidden sign-in email `username.N@yuken-pol.app`), `members/{authUid}` (links a sign-in to a username and role), `people/{username}` (full profile). A person can link themselves only once, with the role Chetan gave them (enforced in `firestore.rules`).
+- **Reset password:** Chetan → People → person → Reset password. Their sign-in moves to a new hidden email (N+1) and they choose a new password next time.
+- **Admin:** Chetan signs in on the Control room with **Google (chethu6424@gmail.com)**. After that he can set an admin password in My account and use either. Only that verified Gmail is admin (`isSuper()` in the rules).
+- **Offline:** scanning keeps working without internet; boxes are saved on the phone and sent when it reconnects (`bg()` in `store-firebase.js`). Signing in for the first time on a device needs internet.
+- Master PIN, Start fresh and demo data are single-computer features and are hidden online.
 
 ## The one admin
 
@@ -127,7 +142,7 @@ The app only asks for `drive.file`, so it can see only the files it made itself.
 - **Commits are authored as `K S Pankaj <pankqx@gmail.com>`, with no co-author lines.**
 - Keep it build-free: no frameworks or bundlers. A new library goes in `vendor/` and is loaded with `loadScript()`.
 - Write interface text in plain, short English. Buttons say what they do ("Close list", not "Submit").
-- Every data change goes through `store-local.js` and writes a line with `log()`.
+- Every data change goes through the store (`store-local.js` and `store-firebase.js` — keep both in step) and writes a line with `log()`.
 - Test both themes, and a phone width (390 px), before pushing.
 - Bump the `CACHE` name in `sw.js` on every release.
 

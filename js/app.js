@@ -130,6 +130,9 @@ function topbar(back) {
 // One shell for everything an employee sees; admins get the sidebar.
 const frame = (active, content, back) => isAdmin(ME.user) ? adminShell(active, content) : `<div class="shell solo"><div>${topbar(back)}${content}</div></div>`;
 
+// Online: a save that failed in the background (offline saves just wait).
+window.addEventListener('yk-sync-error', e => toast(e.detail, 'bad', 6000));
+
 document.addEventListener('click', async e => {
   if (e.target.closest('[data-account]') && ME) return accountDrawer();
   if (e.target.closest('[data-logout]')) {
@@ -197,9 +200,9 @@ function viewLogin(managers, control) {
         <div id="nwrap" hidden>${pw('pw2', 'Type it again', 'new-password', 'again')}</div>
         <div id="err"></div>
         <button class="btn primary lg" type="submit" id="go">Sign in</button>
-        <button type="button" class="linkbtn" id="forgot">Forgot password? Reset it with the master PIN</button>
+        <button type="button" class="linkbtn" id="forgot">${S.CLOUD ? 'Forgot password?' : 'Forgot password? Reset it with the master PIN'}</button>
       </form>
-      ${control ? `<button type="button" class="linkbtn danger-link" id="erase">${icon('trash')} Start fresh on this device</button><br>` : ''}
+      ${control && !S.CLOUD ? `<button type="button" class="linkbtn danger-link" id="erase">${icon('trash')} Start fresh on this device</button><br>` : ''}
       ${control ? `<a class="linkbtn back" href="#/login">${icon('back')} Back to staff sign-in</a>` : ''}
       <p class="login-foot">${esc(SETTINGS.company)} · ${esc(SETTINGS.docTitle)}${SETTINGS.plant ? ' · ' + esc(SETTINGS.plant) : ''}</p></div>`),
     bind() {
@@ -214,6 +217,7 @@ function viewLogin(managers, control) {
         logo.addEventListener('contextmenu', e => e.preventDefault());
       }
       let mgr = null;   // the manager tab that is open, or null for Employee
+      let newPw = null; // online: an employee whose account still needs a password
       const pick = id => {
         mgr = managers.find(m => m.id === id) || null;
         $$('#who button').forEach(b => b.classList.toggle('on', b.dataset.who === (mgr ? mgr.id : 'employee')));
@@ -247,7 +251,7 @@ function viewLogin(managers, control) {
       let linkEmail = null;
       $('#g')?.addEventListener('click', async e => {
         const btn = e.currentTarget; btn.classList.add('busy');
-        try { const g = await googleProfile(); ME = await checkDoor(await S.loginGoogle(g.email)); location.hash = '#/admin'; go(); }
+        try { ME = await checkDoor(S.CLOUD ? await S.googleSignIn() : await S.loginGoogle((await googleProfile()).email)); location.hash = isAdmin(ME.user) ? '#/admin' : '#/home'; go(); }
         catch (err) {
           btn.classList.remove('busy');
           if (err.code === 'unlinked' && control) $('#err').innerHTML = `<div class="form-err">${esc(err.email)} is not Chetan's Google account. Only Chetan can sign in here.</div>`;
@@ -264,7 +268,12 @@ function viewLogin(managers, control) {
         i.type = show ? 'text' : 'password';
         e.currentTarget.innerHTML = icon(show ? 'eyeOff' : 'eye');
       });
-      $('#forgot').onclick = () => formDialog({
+      $('#forgot').onclick = () => S.CLOUD ? confirmBox({
+        title: control ? 'Forgot the admin password?' : 'Forgot your password?',
+        text: control ? 'Tap <b>Sign in with Google</b> with Chetan\'s Gmail. Then set a new admin password from your avatar → My account.'
+          : 'Ask Chetan to reset it (People → your name → Reset password). Then sign in with your username and choose a new password.',
+        ok: 'OK'
+      }) : formDialog({
         title: control ? 'Reset the admin password' : 'Reset a password',
         text: 'Chetan keeps the master PIN. It can reset anyone\'s password, including his own.',
         body: `${control ? '<input type="hidden" name="login" value="">' : field({ name: 'login', label: 'Username or employee no.', value: mgr ? mgr.username : $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
@@ -282,10 +291,10 @@ function viewLogin(managers, control) {
         const v = formData(e.target);
         const user = mgr ? mgr.username : v.username;
         const btn = $('#go'); const fail = err => { btn.classList.remove('busy'); $('#err').innerHTML = `<div class="form-err">${esc(err.message)}</div>`; $('#pw').select(); };
-        if (mgr?.needsPassword) {
+        if (mgr?.needsPassword || newPw) {
           if (!setErrors(e.target, { password: validate.password(v.password), again: v.again === v.password ? '' : 'The two passwords do not match' })) return;
           btn.classList.add('busy');
-          try { ME = await S.firstPassword(mgr.id, v.password); location.hash = '#/admin'; go(); } catch (err) { fail(err); }
+          try { ME = await S.firstPassword(mgr ? mgr.id : newPw, v.password); location.hash = isAdmin(ME.user) ? '#/admin' : '#/home'; go(); } catch (err) { fail(err); }
           return;
         }
         if (!setErrors(e.target, { username: mgr || control ? '' : validate.required(v.username), password: validate.required(v.password) })) return;
@@ -298,7 +307,21 @@ function viewLogin(managers, control) {
           }
           location.hash = isAdmin(ME.user) ? '#/admin' : '#/home';
           go();
-        } catch (err) { fail(err); }
+        } catch (err) {
+          if (err.code === 'needsPassword') {
+            // First sign-in: show "choose your password".
+            newPw = err.username;
+            btn.classList.remove('busy');
+            $('#lh').textContent = `Welcome, ${String(err.name || '').split(' ')[0]}`;
+            $('#lp').textContent = 'Chetan made your account. Choose your password to finish.';
+            $('#uwrap').hidden = true; $('#nwrap').hidden = false;
+            $('#pwrap label').textContent = 'New password'; $('#pw').value = ''; $('#pw').focus();
+            $('#go').textContent = 'Save password and sign in';
+            $('#err').innerHTML = '';
+            return;
+          }
+          fail(err);
+        }
       };
     }
   };
@@ -809,8 +832,9 @@ function openPreview(d, s) {
       <span class="grow"></span>
       <button class="btn ghost" data-p="close">${icon('x')} Close preview</button></aside>`;
   document.body.appendChild(el);
-  const close = () => { el.remove(); document.removeEventListener('keydown', key); };
+  const close = () => { el.remove(); document.removeEventListener('keydown', key); window.removeEventListener('hashchange', close); };
   const key = e => { if (e.key === 'Escape') close(); };
+  window.addEventListener('hashchange', close);   // moving page closes it
   document.addEventListener('keydown', key);
   el.querySelectorAll('[data-p]').forEach(b => b.onclick = () => b.dataset.p === 'close' ? close() : runExport(b.dataset.p, d, s, b));
   el.querySelector('[data-p=print]').focus();
@@ -899,29 +923,30 @@ async function backupNow(btn) {
 // Everyone: my account — password, theme, Google link, sign out.
 function accountDrawer() {
   const u = ME.user;
+  const noPw = S.CLOUD && isSuper(u) && !S.adminHasPassword();   // admin signed in with Google only
   drawer({
     title: 'My account',
     body: `<div class="person" style="margin-bottom:18px"><div class="avatar" style="width:48px;height:48px;font-size:16px">${initials(u.name)}</div><div><b style="font-size:17px">${esc(u.name)}</b><span>${ROLE_NAME[u.role]} · ${esc(u.empNo)}</span></div></div>
       <dl class="kv" style="margin-bottom:20px"><dt>Signed in</dt><dd>${fmt.dt(ME.session.loginAt)}${ME.session.via === 'google' ? ' with Google' : ''}</dd>
         <dt>Stays signed in</dt><dd>${isAdmin(u) ? 'Until you press Sign out' : 'Until the end of the shift'}</dd></dl>
       <div class="fgroup"><h3>Look</h3><button class="btn" data-theme-btn-row type="button">${icon(theme() === 'light' ? 'moon' : 'sun')} ${theme() === 'light' ? 'Use dark mode' : 'Use light mode'}</button></div>
-      ${googleOn() && u.role === 'manager' ? `<div class="fgroup"><h3>Google sign-in</h3>${u.googleEmail ? `<p class="mute" style="margin:0 0 10px">Linked to <b>${esc(u.googleEmail)}</b></p><button class="btn" id="unlink">Remove Google link</button>` : `<p class="mute" style="margin:0 0 10px">Link your Gmail to sign in with one tap.</p><button class="btn google" id="link">${icon('google')} Link my Google account</button>`}</div>` : ''}
-      <div class="fgroup"><h3>Change password</h3><form id="cp" style="display:grid;gap:14px" novalidate>
-        ${field({ name: 'cur', label: 'Current password', type: 'password' })}${field({ name: 'next', label: 'New password', type: 'password', hint: 'At least 8 characters with a letter and a number' })}${field({ name: 'again', label: 'Type it again', type: 'password' })}
+      ${(S.CLOUD ? !isSuper(u) : googleOn() && u.role === 'manager') ? `<div class="fgroup"><h3>Google sign-in</h3>${u.googleEmail ? `<p class="mute" style="margin:0 0 10px">Linked to <b>${esc(u.googleEmail)}</b></p><button class="btn" id="unlink">Remove Google link</button>` : `<p class="mute" style="margin:0 0 10px">Link your Gmail to sign in with one tap.</p><button class="btn google" id="link">${icon('google')} Link my Google account</button>`}</div>` : ''}
+      <div class="fgroup"><h3>${noPw ? 'Set an admin password' : isSuper(u) ? 'Change admin password' : 'Change password'}</h3>${noPw ? '<p class="mute" style="margin:0 0 10px;font-size:13.5px">Lets you sign in on the Control room with a password as well as with Google.</p>' : ''}<form id="cp" style="display:grid;gap:14px" novalidate>
+        ${noPw ? '' : field({ name: 'cur', label: 'Current password', type: 'password' })}${field({ name: 'next', label: 'New password', type: 'password', hint: 'At least 8 characters with a letter and a number' })}${field({ name: 'again', label: 'Type it again', type: 'password' })}
         <div><button class="btn primary">Save password</button></div></form></div>`,
     foot: `<button class="btn danger" data-logout>${icon('logout')} Sign out</button>`,
     onMount(el, close) {
       el.querySelector('[data-theme-btn-row]').onclick = () => { setTheme(theme() === 'light' ? 'dark' : 'light'); close(); };
       el.querySelector('#link')?.addEventListener('click', async () => {
-        try { const g = await googleProfile(); await S.linkGoogle(u, g.email); close(); toast(`Linked ${g.email}. Use "Sign in with Google" next time.`); } catch (err) { toast(err.message, 'bad', 5000); }
+        try { const email = S.CLOUD ? (await S.linkGoogle(u), u.googleEmail) : (await S.linkGoogle(u, (await googleProfile()).email), u.googleEmail); close(); toast(`Linked ${email}. Use "Sign in with Google" next time.`); } catch (err) { toast(err.message, 'bad', 5000); }
       });
       el.querySelector('#unlink')?.addEventListener('click', async () => { await S.linkGoogle(u, null); close(); toast('Google link removed'); });
       el.querySelector('[data-logout]').addEventListener('click', () => close());
       el.querySelector('#cp').onsubmit = async e => {
         e.preventDefault();
         const f = e.target; const v = formData(f);
-        if (!setErrors(f, { cur: validate.required(v.cur), next: validate.password(v.next), again: v.again === v.next ? '' : 'Passwords do not match' })) return;
-        try { await (isSuper(u) ? S.changeAdminPassword(v.cur, v.next, u) : S.changePassword(u, v.cur, v.next)); close(); toast(isSuper(u) ? 'Admin password changed on this device' : 'Password changed'); } catch (err) { setErrors(f, { cur: err.message }); }
+        if (!setErrors(f, { cur: noPw ? '' : validate.required(v.cur), next: validate.password(v.next), again: v.again === v.next ? '' : 'Passwords do not match' })) return;
+        try { await (isSuper(u) ? S.changeAdminPassword(v.cur, v.next, u) : S.changePassword(u, v.cur, v.next)); close(); toast(isSuper(u) ? (S.CLOUD ? 'Admin password saved' : 'Admin password changed on this device') : 'Password changed'); } catch (err) { setErrors(f, { cur: err.message }); }
       };
     }
   });
@@ -1075,7 +1100,7 @@ function personDrawer(p) {
       </div></div>
       <div class="fgroup"><h3>Sign-in</h3><div class="grid2">
         ${field({ name: 'username', label: 'Username', value: p.username, attrs: 'autocapitalize="none" autocomplete="off"' })}
-        ${isNew ? `<div id="pwbox">${field({ name: 'password', label: 'Temporary password', type: 'text', value: tempPw(), attrs: 'autocomplete="off"', hint: 'They set their own after first sign-in' })}</div><p class="mute" id="pwmgr" hidden style="margin:0;font-size:13.5px;align-self:center">No password needed. The manager picks their own on their tab on the sign-in screen.</p>` : ro ? '' : `<div class="field"><div class="lbl">Password</div><button type="button" class="btn" data-reset>${icon('key')} Reset password</button></div>`}
+        ${isNew && S.CLOUD ? `<p class="mute" style="margin:0;font-size:13.5px;align-self:center">No password needed. They choose their own the first time they sign in, on any phone or computer.</p>` : isNew ? `<div id="pwbox">${field({ name: 'password', label: 'Temporary password', type: 'text', value: tempPw(), attrs: 'autocomplete="off"', hint: 'They set their own after first sign-in' })}</div><p class="mute" id="pwmgr" hidden style="margin:0;font-size:13.5px;align-self:center">No password needed. The manager picks their own on their tab on the sign-in screen.</p>` : ro ? '' : `<div class="field"><div class="lbl">Password</div><button type="button" class="btn" data-reset>${icon('key')} Reset password</button></div>`}
       </div></div>
       ${isNew ? '' : `<div class="fgroup"><h3>Record</h3><div class="audit-box">
         <div><span>Account created</span>${fmt.dt(p.createdAt)}</div>
@@ -1096,7 +1121,7 @@ function personDrawer(p) {
       const roleSync = () => {
         const r = f.role.value;
         el.querySelector('#permbox').hidden = r === 'super';
-        if (isNew) { el.querySelector('#pwbox').hidden = r === 'manager'; el.querySelector('#pwmgr').hidden = r !== 'manager'; f.seeDetails.checked = r === 'manager'; }
+        if (isNew && !S.CLOUD) { el.querySelector('#pwbox').hidden = r === 'manager'; el.querySelector('#pwmgr').hidden = r !== 'manager'; f.seeDetails.checked = r === 'manager'; }
       };
       f.role.addEventListener('change', roleSync); roleSync();
       f.aadhaar.addEventListener('input', e => { const d = e.target.value.replace(/\D/g, '').slice(0, 12); e.target.value = d.replace(/(\d{4})(?=\d)/g, '$1 '); });
@@ -1107,7 +1132,7 @@ function personDrawer(p) {
         v.username = (v.username || '').trim().toLowerCase();
         v.aadhaar = (v.aadhaar || '').replace(/\s/g, '');
         ['phone', 'altPhone', 'emPhone'].forEach(k => { v[k] = (v[k] || '').replace(/\D/g, '').slice(-10); });
-        const mgrNew = isNew && v.role === 'manager';
+        const mgrNew = isNew && (v.role === 'manager' || S.CLOUD);
         const light = (v.role || p.role) !== 'employee';   // managers and admins: fewer required fields
         const errs = {
           name: validate.name(v.name), dob: light && !v.dob ? '' : validate.dob(v.dob), phone: validate.phone(v.phone),
@@ -1127,13 +1152,19 @@ function personDrawer(p) {
         try {
           await S.saveUser(data, ME.user, isNew && !mgrNew ? v.password : null);
           close();
-          if (mgrNew) await confirmBox({ title: `${data.name} is added as a manager`, text: `A <b>${esc(data.name.split(' ')[0])}</b> tab now shows on the sign-in screen. ${esc(data.name.split(' ')[0])} opens it and chooses a password. Nothing to share.`, ok: 'Done' });
+          if (mgrNew && v.role === 'manager') await confirmBox({ title: `${data.name} is added as a manager`, text: `A <b>${esc(data.name.split(' ')[0])}</b> tile now shows on the sign-in screen${S.CLOUD ? ' on every phone and computer' : ''}. ${esc(data.name.split(' ')[0])} taps it and chooses a password. Nothing to share.`, ok: 'Done' });
+          else if (mgrNew) await confirmBox({ title: `${data.name} is added`, text: `Tell ${esc(data.name.split(' ')[0])} the username <b class="code">${esc(data.username)}</b>. On the sign-in screen they type it, tap Sign in, and choose their own password. Works on any phone or computer with the link.`, ok: 'Done' });
           else if (isNew) await confirmBox({ title: `${data.name} can sign in now`, text: `Username <b class="code">${esc(data.username)}</b><br>Temporary password <b class="code">${esc(v.password)}</b><br><br>Share these with them in person. They will set their own password at first sign-in.`, ok: 'Done' });
           else toast('Saved');
           go();
         } catch (err) { btn.classList.remove('busy'); toast(err.message, 'bad', 4000); }
       };
       el.querySelector('[data-reset]')?.addEventListener('click', async () => {
+        if (S.CLOUD) {
+          if (!(await confirmBox({ title: `Reset password for ${esc(p.name)}?`, text: `Their old password stops working. Next time they sign in with username <b class="code">${esc(p.username)}</b>${p.role === 'manager' ? ' (or tap their tile)' : ''}, they choose a new one.`, ok: 'Reset password' }))) return;
+          try { await S.resetPassword(p, null, ME.user); } catch (err) { return toast(err.message, 'bad'); }
+          close(); toast(`${p.name} will choose a new password at next sign-in`, 'ok', 5000); return go();
+        }
         const pw = tempPw();
         if (!(await confirmBox({ title: `Reset password for ${esc(p.name)}?`, text: `The new temporary password will be <b class="code">${pw}</b>. They must change it at next sign-in.`, ok: 'Reset password' }))) return;
         try { await S.resetPassword(p, pw, ME.user); } catch (err) { return toast(err.message, 'bad'); }
@@ -1242,18 +1273,18 @@ route(/^\/admin\/settings$/, async () => {
         <div class="panel"><div class="panel-head"><h2>Locations</h2></div><div class="panel-body">
           <div class="chips">${chips('locations')}</div>
           <form class="inline" data-add="locations"><input class="input" placeholder="Add a location" required><button class="btn">${icon('plus')} Add</button></form></div></div>
-        <div class="panel"><div class="panel-head"><h2>Master PIN</h2></div><div class="panel-body" style="display:grid;gap:12px">
+        ${S.CLOUD ? '' : `<div class="panel"><div class="panel-head"><h2>Master PIN</h2></div><div class="panel-body" style="display:grid;gap:12px">
           <p class="mute" style="margin:0;font-size:14px">Resets any password from the sign-in screen, including the admin's. Five wrong tries lock it for 10 minutes.</p>
-          <div><button class="btn" id="mpin">${icon('key')} Change master PIN</button></div></div></div>
+          <div><button class="btn" id="mpin">${icon('key')} Change master PIN</button></div></div></div>`}
         <div class="panel"><div class="panel-head"><h2>Data</h2></div><div class="panel-body" style="display:grid;gap:12px">
-          <p class="mute" style="margin:0;font-size:14px">Everything is saved on this device, in this browser. Back up once a week.${googleOn() ? ' Backups go to your Google Drive, in a folder called <b>Yuken POL backups</b>.' : ' Turn on Google (see AGENTS.md) to back up straight to Google Drive.'}</p>
+          <p class="mute" style="margin:0;font-size:14px">${S.CLOUD ? 'Everything is saved online in Firebase and shared by every phone and computer. Keep a backup once a week anyway.' : 'Everything is saved on this device, in this browser. Back up once a week.'}${googleOn() ? ' Backups go to your Google Drive, in a folder called <b>Yuken POL backups</b>.' : ' Turn on Google (see AGENTS.md) to back up straight to Google Drive.'}</p>
           <p style="margin:0;font-size:14px"><b>Last backup:</b> ${bk ? `${fmt.dt(bk.at)} to ${esc(bk.where)}` : 'never'}</p>
           <div style="display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn primary" id="bk">${icon(googleOn() ? 'cloud' : 'download')} ${googleOn() ? 'Back up to Google Drive' : 'Download backup'}</button>
             ${googleOn() ? `<button class="btn" id="rsd">${icon('upload')} Restore from Google Drive</button><button class="btn ghost" id="bkf">${icon('download')} Download a copy</button>` : ''}
             <label class="btn">${icon('upload')} Restore from file<input type="file" accept=".json" id="rs" class="sr"></label>
-            <button class="btn ghost danger" id="erase">${icon('trash')} Erase everything</button>
-            <button class="btn" id="demo">${icon('play')} Load demo data</button>
+            ${S.CLOUD ? '' : `<button class="btn ghost danger" id="erase">${icon('trash')} Erase everything</button>
+            <button class="btn" id="demo">${icon('play')} Load demo data</button>`}
           </div></div></div>
       </div></main>`),
     bind() {
@@ -1267,7 +1298,7 @@ route(/^\/admin\/settings$/, async () => {
         await save({ [k]: [...s[k], v] }); go();
       });
       $$('[data-rm]').forEach(b => b.onclick = async () => { const [k, i] = b.dataset.rm.split(':'); await save({ [k]: s[k].filter((_, j) => j !== +i) }); go(); });
-      $('#mpin').onclick = () => formDialog({
+      if ($('#mpin')) $('#mpin').onclick = () => formDialog({
         title: 'Change master PIN',
         text: 'Use 8 to 16 digits. Write it down and keep it somewhere safe, away from this computer.',
         body: `${field({ name: 'cur', label: 'Current master PIN', type: 'password', attrs: 'inputmode="numeric"' })}${field({ name: 'next', label: 'New master PIN', type: 'password', attrs: 'inputmode="numeric"' })}${field({ name: 'again', label: 'Type it again', type: 'password', attrs: 'inputmode="numeric"' })}`,
@@ -1280,7 +1311,7 @@ route(/^\/admin\/settings$/, async () => {
         }
       }).then(ok => ok && toast('Master PIN changed'));
       $('#bk').onclick = e => backupNow(e.currentTarget);
-      $('#erase').onclick = eraseDialog;
+      $('#erase')?.addEventListener('click', eraseDialog);
       $('#bkf')?.addEventListener('click', async () => {
         const { download } = await import('./util.js');
         download(new Blob([JSON.stringify(await S.backup())], { type: 'application/json' }), `yuken-backup-${fmt.isoDate(Date.now())}.json`);
@@ -1299,7 +1330,7 @@ route(/^\/admin\/settings$/, async () => {
               el.querySelectorAll('[data-f]').forEach(b => b.onclick = async () => {
                 if (!(await confirmBox({ title: 'Restore this backup?', text: 'Everything on this device is replaced. Everyone signs in again.', ok: 'Restore', danger: true }))) return;
                 b.classList.add('busy');
-                try { await S.restore(await open(b.dataset.f)); close(); await S.logout(); toast('Backup restored'); location.hash = '#/login'; go(); }
+                try { await S.restore(await open(b.dataset.f)); close(); if (!S.CLOUD) { await S.logout(); location.hash = '#/login'; } toast('Backup restored'); go(); }
                 catch (err) { b.classList.remove('busy'); toast(err.message, 'bad'); }
               });
             }
@@ -1309,10 +1340,10 @@ route(/^\/admin\/settings$/, async () => {
       if ($('#rs')) $('#rs').onchange = async e => {
         const file = e.target.files[0]; if (!file) return;
         if (!(await confirmBox({ title: 'Restore this backup?', text: 'Everything in this browser is replaced with the backup. You will need to sign in again.', ok: 'Restore', danger: true }))) return;
-        try { await S.restore(JSON.parse(await file.text())); await S.logout(); toast('Backup restored'); location.hash = '#/login'; go(); }
+        try { await S.restore(JSON.parse(await file.text())); if (!S.CLOUD) { await S.logout(); location.hash = '#/login'; } toast('Backup restored'); go(); }
         catch (err) { toast(err.message, 'bad'); }
       };
-      $('#demo').onclick = async e => {
+      if ($('#demo')) $('#demo').onclick = async e => {
         const btn = e.currentTarget;
         if (!(await confirmBox({ title: 'Load demo data?', text: 'Adds three sample employees (password <b class="code">yuken2026</b>) and ten sample lists from the last five days. Use it to show the app, then restore a clean backup.', ok: 'Load demo data' }))) return;
         btn.classList.add('busy');

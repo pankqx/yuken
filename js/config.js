@@ -23,6 +23,21 @@ export const ADMIN = {
   iterations: 310000
 };
 
+// FIREBASE — the shared online database. When filled in, every phone and
+// laptop opening the link sees the same people and loading lists, and only
+// accounts Chetan creates can sign in. Leave apiKey empty to keep the old
+// single-computer mode. Paste the "firebaseConfig" from Firebase console →
+// Project settings → Your apps → Web app. (These values are meant to be public;
+// the security rules in firestore.rules are what protect the data.)
+export const FIREBASE = {
+  apiKey: '',
+  authDomain: '',
+  projectId: '',
+  storageBucket: '',
+  messagingSenderId: '',
+  appId: ''
+};
+
 // GOOGLE — one free "OAuth client ID" turns on two things:
 //   1. "Sign in with Google" for Chetan (and anyone whose Gmail is linked)
 //   2. "Back up to Google Drive" (files go to a "Yuken POL backups" folder)
