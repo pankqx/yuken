@@ -30,12 +30,12 @@ export const ADMIN = {
 // Project settings → Your apps → Web app. (These values are meant to be public;
 // the security rules in firestore.rules are what protect the data.)
 export const FIREBASE = {
-  apiKey: '',
-  authDomain: '',
-  projectId: '',
-  storageBucket: '',
-  messagingSenderId: '',
-  appId: ''
+  apiKey: 'AIzaSyAPdeaJt9TgEFgPkoULVF3r5ImO86qbbzo',
+  authDomain: 'yuken-pol-322c0.firebaseapp.com',
+  projectId: 'yuken-pol-322c0',
+  storageBucket: 'yuken-pol-322c0.firebasestorage.app',
+  messagingSenderId: '940563593715',
+  appId: '1:940563593715:web:8a1579e67ce17298e8ba86'
 };
 
 // GOOGLE — one free "OAuth client ID" turns on two things:
