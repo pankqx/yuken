@@ -1,7 +1,7 @@
 rules_version = '2';
 
-// Yuken POL — who may read and write what in the online database.
-// Paste this whole file into Firebase console → Firestore Database → Rules → Publish.
+// Yuken POL - who may read and write what in the online database.
+// Copy EVERYTHING in this file, including the first line, into Firebase console -> Firestore Database -> Rules -> Publish.
 //
 // Only Chetan (his verified Gmail) is the admin. He creates every account.
 // Anyone can create an empty Firebase sign-in with the public web key, but
@@ -87,7 +87,7 @@ service cloud.firestore {
       allow update, delete: if isSuper();
     }
 
-    // Box → list index for the "already loaded on another vehicle" check.
+    // Box -> list index for the "already loaded on another vehicle" check.
     match /boxIndex/{key} {
       allow read: if isMember();
       allow create, update, delete: if canLoad();
