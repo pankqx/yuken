@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, totals, renumber, demoLists, DEMO_
 
 const SESSION_KEY = 'yk.session';
 
-// Roles: 'super' (Chetan — full control), 'manager' (bosses — look, never
+// Roles: 'super' (the admin — full control), 'manager' (bosses — look, never
 // change), 'employee' (loaders and other workers — scan their own lists).
 export const isAdmin = u => u?.role === 'manager' || u?.role === 'super';   // can see everything
 export const isSuper = u => u?.role === 'super';                            // can change everything
@@ -18,8 +18,9 @@ const ADMIN_ID = 'u-admin';
 const ADMIN_LOCK = 'yk.adminlock';
 async function ensureAdmin() {
   let u = await db.get('users', ADMIN_ID);
+  if (u && u.name !== ADMIN.name) { u.name = ADMIN.name; u.googleEmail = null; await db.put('users', u); }
   if (!u) {
-    u = { id: ADMIN_ID, role: 'super', name: ADMIN.name, username: 'admin', empNo: 'ADMIN', designation: 'Administrator', googleEmail: ADMIN.email, active: true, createdAt: Date.now(), createdBy: 'system' };
+    u = { id: ADMIN_ID, role: 'super', name: ADMIN.name, username: 'admin', empNo: 'ADMIN', designation: 'Administrator', active: true, createdAt: Date.now(), createdBy: 'system' };
     await db.put('users', u);
   }
   return u;
@@ -53,7 +54,7 @@ export async function changeAdminPassword(current, next, actor) {
 export const init = () => (ready ||= migrate());
 async function migrate() {
   const all = await db.all('users');
-  // Only one admin exists: the built-in Chetan account (ADMIN_ID). Any other
+  // Only one admin exists: the built-in the admin account (ADMIN_ID). Any other
   // admin from older versions or testing is turned into a disabled manager.
   for (const u of all) {
     if (u.role === 'admin' || (u.role === 'super' && u.id !== ADMIN_ID)) {
@@ -131,7 +132,7 @@ function assertUnique(all, data) {
 }
 
 export async function saveUser(data, actor, password) {
-  if (data.role === 'super' && data.id !== ADMIN_ID) throw new Error('There is only one admin: Chetan.');
+  if (data.role === 'super' && data.id !== ADMIN_ID) throw new Error('There is only one admin: the admin.');
   const all = await db.all('users');
   assertUnique(all, data);
   const now = Date.now();
@@ -157,6 +158,12 @@ export async function resetPassword(p, password, actor) {
   await log(actor, 'user.reset', `${u.name} (${u.empNo})`);
 }
 
+export async function deleteUser(p, actor) {
+  if (p.role === 'super') throw new Error('The admin account cannot be deleted.');
+  await db.del('users', p.id);
+  await log(actor, 'user.delete', `${p.name} (${p.empNo})`);
+}
+
 export async function setUserActive(p, active, actor) {
   const u = await db.get('users', p.id);
   u.active = active; u.updatedAt = Date.now(); u.updatedBy = actor.name;
@@ -178,7 +185,7 @@ export async function login(username, password) {
     attempts[key] = a;
     throw new Error('Username or password is incorrect.');
   }
-  if (!u.active) throw new Error('This account is disabled. Ask Chetan to enable it.');
+  if (!u.active) throw new Error('This account is disabled. Ask the admin to enable it.');
   delete attempts[key];
   return startSession(u, 'password');
 }
@@ -189,7 +196,7 @@ export async function managersForLogin() {
     .sort((a, b) => a.createdAt - b.createdAt)
     .map(u => ({ id: u.id, name: u.name, username: u.username, designation: u.designation, needsPassword: !!u.needsPassword || !u.hash }));
 }
-// A manager Chetan created chooses their own password the first time.
+// A manager the admin created chooses their own password the first time.
 export async function firstPassword(id, password) {
   const u = await db.get('users', id);
   if (!u || u.role !== 'manager' || !(u.needsPassword || !u.hash)) throw new Error('This account already has a password. Sign in with it.');
@@ -202,7 +209,7 @@ export async function firstPassword(id, password) {
 // Google sign-in: the Gmail address must be linked to an account first.
 export async function loginGoogle(email) {
   const e = String(email || '').toLowerCase();
-  if (e === ADMIN.email.toLowerCase()) return startSession(await ensureAdmin(), 'google');
+  if ((ADMIN.emails || [ADMIN.email]).map(x => x.toLowerCase()).includes(e)) return startSession(await ensureAdmin(), 'google');
   const u = (await db.all('users')).find(x => x.googleEmail === e);
   if (!u) throw Object.assign(new Error(`${email} is not linked to an account yet.`), { code: 'unlinked', email: e });
   if (!u.active) throw new Error('This account is disabled.');
@@ -231,7 +238,7 @@ export async function currentSession() {
     if (!s) return null;
     const user = await db.get('users', s.userId);
     if (!user || !user.active) { localStorage.removeItem(SESSION_KEY); return null; }
-    // Chetan and managers stay signed in until they press Sign out.
+    // the admin and managers stay signed in until they press Sign out.
     // Employees are signed out after a shift, so the next person signs in fresh.
     if (!isAdmin(user) && Date.now() - s.loginAt > SHIFT_MS) { localStorage.removeItem(SESSION_KEY); await log(user, 'auth.logout', 'shift ended'); return null; }
     return { user, session: s };
@@ -367,11 +374,11 @@ async function checkPin(pin) {
 
 export async function masterReset(login, pin, password) {
   await checkPin(pin);
-  // Empty username = the admin password (Chetan).
+  // Empty username = the admin password (the admin).
   if (!String(login || '').trim()) {
     await setAdminPassword(password, 'Master PIN');
     await log({ id: ADMIN_ID, name: 'Master PIN' }, 'user.reset', 'admin password');
-    return { name: 'Chetan (admin)', username: '' };
+    return { name: 'the admin (admin)', username: '' };
   }
   const u = await findUser(login);
   if (!u || u.role === 'super') throw new Error('No account with that username or employee no.');

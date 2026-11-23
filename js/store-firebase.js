@@ -13,9 +13,9 @@
 //   audit/{id}          activity log
 //   settings/{id}       app settings, last backup
 //
-// Accounts: only Chetan creates them. A new person gets a hidden sign-in email
+// Accounts: only the admin creates them. A new person gets a hidden sign-in email
 // (username.N@yuken-pol.app) and chooses their own password the first time
-// they sign in. Chetan "resets" a password by moving the person to a new
+// they sign in. The admin "resets" a password by moving the person to a new
 // hidden email (N+1); they then choose a new password.
 import { auth, fdb, F } from './fb.js';
 import { ADMIN } from './config.js';
@@ -35,7 +35,8 @@ const now = () => Date.now();
 const low = v => String(v ?? '').trim().toLowerCase();
 const timeout = (p, ms, fallback) => Promise.race([p, new Promise(r => setTimeout(() => r(fallback), ms))]);
 const docs = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
-const isSuperAuth = u => !!u && low(u.email) === low(ADMIN.email) && u.emailVerified;
+const ADMIN_EMAILS = (ADMIN.emails || [ADMIN.email]).map(low);
+const isSuperAuth = u => !!u && ADMIN_EMAILS.includes(low(u.email)) && u.emailVerified;
 const hiddenEmail = (username, v) => `${username}.${v}@${MAIL}`;
 
 // Writes that must not wait for the network (scanning works offline; the
@@ -74,8 +75,18 @@ let ME = null;   // the signed-in person's profile
 async function ensureAdmin(cu) {
   let p = (await F.getDoc(D('people', ADMIN_ID))).data();
   if (!p) {
-    p = { id: ADMIN_ID, role: 'super', name: ADMIN.name, username: ADMIN_ID, empNo: 'ADMIN', designation: 'Administrator', googleEmail: low(ADMIN.email), active: true, createdAt: now(), createdBy: 'system' };
+    p = { id: ADMIN_ID, role: 'super', name: ADMIN.name, username: ADMIN_ID, empNo: 'ADMIN', designation: 'Administrator', active: true, createdAt: now(), createdBy: 'system' };
     await F.setDoc(D('people', ADMIN_ID), p);
+  } else if (p.name !== ADMIN.name || p.googleEmail) {
+    // The admin account carries a generic name everywhere, also in old records.
+    p = { ...p, name: ADMIN.name, googleEmail: null };
+    await F.updateDoc(D('people', ADMIN_ID), { name: ADMIN.name, googleEmail: null });
+    bg((async () => {
+      const b = F.writeBatch(fdb); let n = 0;
+      for (const a of docs(await F.getDocs(F.query(C('audit'), F.where('by', '==', ADMIN_ID))))) if (a.byName !== ADMIN.name) { b.update(D('audit', a.id), { byName: ADMIN.name }); n++; }
+      for (const d of docs(await F.getDocs(F.query(C('dispatches'), F.where('createdBy', '==', ADMIN_ID))))) if (d.empName !== ADMIN.name) { b.update(D('dispatches', d.id), { empName: ADMIN.name }); n++; }
+      if (n) await b.commit();
+    })(), 'Renaming old admin records');
   }
   if (!(await F.getDoc(D('members', cu.uid))).exists()) await F.setDoc(D('members', cu.uid), { username: ADMIN_ID, role: 'super', active: true });
   return { ...p, id: ADMIN_ID, role: 'super', uid: cu.uid };
@@ -97,7 +108,7 @@ async function startSession(via) {
   try { user = await loadMe(); } catch (e) { await F.signOut(auth); throw friendly(e); }
   if (!user) {
     await F.signOut(auth);
-    throw new Error('This account is not set up or is disabled. Ask Chetan.');
+    throw new Error('This account is not set up or is disabled. Ask the admin.');
   }
   ME = user;
   const session = { userId: user.id, loginAt: now(), via };
@@ -118,7 +129,7 @@ export async function currentSession() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { /* ignore */ }
   if (!s || s.userId !== user.id) { s = { userId: user.id, loginAt: now(), via: 'password' }; localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
-  // Chetan and managers stay signed in until they press Sign out.
+  // the admin and managers stay signed in until they press Sign out.
   // Employees are signed out after a shift, so the next person signs in fresh.
   if (!isAdmin(user) && now() - s.loginAt > SHIFT_MS) {
     await timeout(log(user, 'auth.logout', 'shift ended'), 2000);
@@ -149,7 +160,7 @@ export async function login(username, password) {
   let l;
   try { l = await findLogin(username); } catch (e) { throw friendly(e); }
   if (!l || l.role === 'super') throw new Error('Username or password is incorrect.');
-  if (!l.active) throw new Error('This account is disabled. Ask Chetan to enable it.');
+  if (!l.active) throw new Error('This account is disabled. Ask the admin to enable it.');
   if (l.needsPassword) throw Object.assign(new Error('Choose your password to finish setting up your account.'), { code: 'needsPassword', username: l.id, name: l.name });
   try { await F.signInWithEmailAndPassword(auth, l.authEmail, password); } catch (e) { throw friendly(e); }
   return startSession('password');
@@ -164,20 +175,20 @@ export async function managersForLogin() {
   } catch { return []; }
 }
 
-// First sign-in of an account Chetan created: the person picks a password.
+// First sign-in of an account the admin created: the person picks a password.
 export async function firstPassword(username, password) {
   const u = low(username);
   const snap = await F.getDoc(D('logins', u)).catch(e => { throw friendly(e); });
   const l = snap.data();
-  if (!l || l.role === 'super' || !l.active) throw new Error('This account does not exist or is disabled. Ask Chetan.');
+  if (!l || l.role === 'super' || !l.active) throw new Error('This account does not exist or is disabled. Ask the admin.');
   if (!l.needsPassword) throw new Error('This account already has a password. Sign in with it.');
   try {
     await F.createUserWithEmailAndPassword(auth, l.authEmail, password);
   } catch (e) {
     if (e.code !== 'auth/email-already-in-use') throw friendly(e);
-    // An earlier attempt got halfway. Same password finishes it; otherwise Chetan resets.
+    // An earlier attempt got halfway. Same password finishes it; otherwise the admin resets.
     try { await F.signInWithEmailAndPassword(auth, l.authEmail, password); }
-    catch { throw new Error('This account was already being set up. Ask Chetan to reset your password.'); }
+    catch { throw new Error('This account was already being set up. Ask the admin to reset your password.'); }
   }
   const uid = auth.currentUser.uid;
   try {
@@ -190,12 +201,17 @@ export async function firstPassword(username, password) {
   return s;
 }
 
-// Admin: Chetan's Gmail + the admin password he linked to it.
+// Admin: the admin's Gmail + the admin password he linked to it.
 export async function adminLogin(password) {
-  try { await F.signInWithEmailAndPassword(auth, ADMIN.email, password); }
-  catch (e) {
-    if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found'].includes(e.code)) throw new Error('Admin password is incorrect. If you have not set one yet, use Sign in with Google.');
-    throw friendly(e);
+  // Any admin Gmail that has an admin password linked to it.
+  let ok = false, last;
+  for (const email of ADMIN_EMAILS) {
+    try { await F.signInWithEmailAndPassword(auth, email, password); ok = true; break; }
+    catch (e) { last = e; if (!['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email'].includes(e.code)) break; }
+  }
+  if (!ok) {
+    if (['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found'].includes(last?.code)) throw new Error('Admin password is incorrect. If you have not set one yet, use Sign in with Google.');
+    throw friendly(last);
   }
   if (!isSuperAuth(auth.currentUser)) { await F.signOut(auth); throw new Error('Use Sign in with Google once to confirm the admin account.'); }
   return startSession('password');
@@ -271,7 +287,9 @@ export async function saveSettings(patch, actor) {
 // ---------- activity ----------
 export function log(actor, action, detail = '') {
   if (!actor?.id || !auth.currentUser) return Promise.resolve();
-  const p = F.addDoc(C('audit'), { at: now(), by: actor.id, byName: actor.name, action, detail: String(detail || '') });
+  const entry = { at: now(), by: actor.id, byName: actor.name, action, detail: String(detail || '') };
+  if (actor.id === ADMIN_ID) entry.account = auth.currentUser.email || '';   // which admin Gmail did it
+  const p = F.addDoc(C('audit'), entry);
   p.catch(e => console.warn('activity not saved', e));
   return p.catch(() => {});
 }
@@ -290,7 +308,7 @@ export async function deleteAudit(id, actor) {
   log(actor, 'audit.delete', `${a.byName}: ${a.action}${a.detail ? ' ' + a.detail : ''}`);
 }
 
-// ---------- people (Chetan only changes these) ----------
+// ---------- people (the admin only changes these) ----------
 export async function users() {
   return docs(await F.getDocs(C('people'))).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -304,7 +322,7 @@ function assertUnique(all, data) {
 }
 
 export async function saveUser(data, actor) {
-  if (data.role === 'super' && data.id !== ADMIN_ID) throw new Error('There is only one admin: Chetan.');
+  if (data.role === 'super' && data.id !== ADMIN_ID) throw new Error('There is only one admin: the admin.');
   const all = await users();
   const existing = data.id ? all.find(u => u.id === data.id) : null;
   const { password, ...rest } = data;
@@ -348,6 +366,17 @@ export async function resetPassword(p, _password, actor) {
   if (l.uid) b.delete(D('members', l.uid));
   await b.commit().catch(e => { throw friendly(e); });
   log(actor, 'user.reset', `${p.name} (${p.empNo})`);
+}
+
+// Delete an account for good (the admin only). Their lists and activity stay.
+export async function deleteUser(p, actor) {
+  if (p.id === ADMIN_ID || p.role === 'super') throw new Error('The admin account cannot be deleted.');
+  const b = F.writeBatch(fdb);
+  b.delete(D('people', p.id));
+  b.delete(D('logins', p.username));
+  if (p.uid) b.delete(D('members', p.uid));
+  await b.commit().catch(e => { throw friendly(e); });
+  log(actor, 'user.delete', `${p.name} (${p.empNo})`);
 }
 
 export async function setUserActive(p, active, actor) {

@@ -12,7 +12,7 @@ const isAdmin = u => u?.role === 'manager' || u?.role === 'super';   // sees eve
 const isSuper = u => u?.role === 'super';                            // changes everything
 const ROLE_NAME = { super: 'Admin', manager: 'Manager', employee: 'Employee' };
 // Full details (weights, vehicle, driver, photo) in previews, PDFs, Excel and shares.
-// Chetan always; managers by default; employees only when Chetan allows it.
+// the admin always; managers by default; employees only when the admin allows it.
 const canSeeDetails = u => isSuper(u) || (u?.seeDetails ?? u?.role === 'manager');
 const outView = d => canSeeDetails(ME.user) ? d : X.limitView(d);
 
@@ -62,7 +62,7 @@ async function route_() {
     const m = hash.match(r.re);
     if (!m) continue;
     if (r.admin && !isAdmin(ME.user)) break;
-    if (r.super && !isSuper(ME.user)) { toast('Only Chetan (admin) can open Settings', 'bad'); break; }
+    if (r.super && !isSuper(ME.user)) { toast('Only the admin can open Settings', 'bad'); break; }
     try { return await r.fn(...m.slice(1)); }
     catch (err) {
       console.error(err);
@@ -162,7 +162,7 @@ function mountStage() {
 function eraseDialog() {
   return formDialog({
     title: 'Start fresh on this device?',
-    text: 'This deletes <b>every account, loading list, photo and activity entry</b> on this device. It cannot be undone. Afterwards the app asks Chetan to create the admin account again.',
+    text: 'This deletes <b>every account, loading list, photo and activity entry</b> on this device. It cannot be undone. Afterwards the app asks the admin to create the admin account again.',
     body: `${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
       ${field({ name: 'word', label: 'Type ERASE to confirm', attrs: 'autocapitalize="characters" autocomplete="off"' })}`,
     ok: 'Erase everything',
@@ -175,7 +175,7 @@ function eraseDialog() {
 }
 
 // Sign-in. The front door has an Employee tab and one tab per manager.
-// Chetan's admin door is a separate screen (#/control). Open it by pressing
+// the admin's admin door is a separate screen (#/control). Open it by pressing
 // and holding the Yuken logo for 2 seconds, or by going to the address.
 function viewLogin(managers, control) {
   const pw = (id = 'pw', label = 'Password', ac = 'current-password', name = 'password') => `<div class="field" data-field="${name}"><label for="${id}">${label}</label>
@@ -183,14 +183,14 @@ function viewLogin(managers, control) {
     <button type="button" data-eye aria-label="Show password">${icon('eye')}</button></div><div class="msg"></div></div>`;
   const head = control
     ? `<div class="ctl-badge">${icon('lock')} Control room</div>
-       <h1>Admin sign-in</h1><p>For Chetan only. Enter the admin password, or sign in with Chetan's Google account.</p>
+       <h1>Admin sign-in</h1><p>Admins only. Enter the admin password, or sign in with an admin Google account.</p>
        ${googleOn() ? `<button type="button" class="btn lg google" id="g">${icon('google')} Sign in with Google</button><p class="or">or use your password</p>` : ''}`
     : `<div class="users" role="tablist" id="who">
          <button type="button" role="tab" class="on" data-who="employee"><span class="uicon">${icon('users')}</span><b>Employee</b><small>Loading staff</small></button>
          ${managers.map(m => `<button type="button" role="tab" data-who="${m.id}"><span class="uicon">${initials(m.name)}</span><b>${esc(m.name.split(' ')[0])}</b><small>${m.needsPassword ? 'New — set password' : 'Manager'}</small></button>`).join('')}
        </div>
        <h1 id="lh">Sign in to start loading</h1>
-       <p id="lp">Use the username or employee number Chetan gave you.</p>
+       <p id="lp">Use the username or employee number the admin gave you.</p>
        <div class="who-card" id="mcard" hidden></div>`;
   return {
     html: stage(`<div class="${control ? 'ctl' : ''}">${head}
@@ -227,14 +227,14 @@ function viewLogin(managers, control) {
         $('#err').innerHTML = '';
         if (mgr) {
           $('#lh').textContent = mgr.needsPassword ? `Welcome, ${mgr.name.split(' ')[0]}` : 'Manager sign-in';
-          $('#lp').textContent = mgr.needsPassword ? 'Chetan made your account. Choose your password to finish.' : 'View every list, the dashboard and the activity log. You stay signed in until you press Sign out.';
+          $('#lp').textContent = mgr.needsPassword ? 'Your account is ready. Choose your password to finish.' : 'View every list, the dashboard and the activity log. You stay signed in until you press Sign out.';
           $('#mcard').innerHTML = `<div class="avatar">${initials(mgr.name)}</div><div><b>${esc(mgr.name)}</b><span>${esc(mgr.designation || 'Manager')}</span></div>`;
           $('#pwrap label').textContent = mgr.needsPassword ? 'New password' : 'Password';
           $('#go').textContent = mgr.needsPassword ? 'Save password and sign in' : 'Sign in';
           $('#pw').focus();
         } else if (!control) {
           $('#lh').textContent = 'Sign in to start loading';
-          $('#lp').textContent = 'Use the username or employee number Chetan gave you.';
+          $('#lp').textContent = 'Use the username or employee number the admin gave you.';
           $('#pwrap label').textContent = 'Password'; $('#go').textContent = 'Sign in';
         }
         try { localStorage.setItem('yk.who', mgr ? mgr.id : 'employee'); } catch { /* ignore */ }
@@ -254,7 +254,7 @@ function viewLogin(managers, control) {
         try { ME = await checkDoor(S.CLOUD ? await S.googleSignIn() : await S.loginGoogle((await googleProfile()).email)); location.hash = isAdmin(ME.user) ? '#/admin' : '#/home'; go(); }
         catch (err) {
           btn.classList.remove('busy');
-          if (err.code === 'unlinked' && control) $('#err').innerHTML = `<div class="form-err">${esc(err.email)} is not Chetan's Google account. Only Chetan can sign in here.</div>`;
+          if (err.code === 'unlinked' && control) $('#err').innerHTML = `<div class="form-err">${esc(err.email)} is not an admin Google account.</div>`;
           else if (err.code === 'unlinked') {
             linkEmail = err.email;
             $('#err').innerHTML = `<div class="linked">${icon('google')}<span><b>${esc(err.email)}</b> is not linked yet. Type your ${mgr ? '' : 'username and '}password once below. It will be linked, and next time Google is enough.</span></div>`;
@@ -270,12 +270,12 @@ function viewLogin(managers, control) {
       });
       $('#forgot').onclick = () => S.CLOUD ? confirmBox({
         title: control ? 'Forgot the admin password?' : 'Forgot your password?',
-        text: control ? 'Tap <b>Sign in with Google</b> with Chetan\'s Gmail. Then set a new admin password from your avatar → My account.'
-          : 'Ask Chetan to reset it (People → your name → Reset password). Then sign in with your username and choose a new password.',
+        text: control ? 'Tap <b>Sign in with Google</b> with an admin Gmail. Then set a new admin password from your avatar → My account.'
+          : 'Ask the admin to reset it (People → your name → Reset password). Then sign in with your username and choose a new password.',
         ok: 'OK'
       }) : formDialog({
         title: control ? 'Reset the admin password' : 'Reset a password',
-        text: 'Chetan keeps the master PIN. It can reset anyone\'s password, including his own.',
+        text: 'The admin keeps the master PIN. It can reset anyone\'s password, including his own.',
         body: `${control ? '<input type="hidden" name="login" value="">' : field({ name: 'login', label: 'Username or employee no.', value: mgr ? mgr.username : $('#f_username').value, attrs: 'autocapitalize="none" autocomplete="off"' })}
           ${field({ name: 'pin', label: 'Master PIN', type: 'password', attrs: 'inputmode="numeric" autocomplete="off"' })}
           ${field({ name: 'next', label: 'New password', type: 'password', attrs: 'autocomplete="new-password"', hint: 'At least 8 characters with a letter and a number' })}`,
@@ -313,7 +313,7 @@ function viewLogin(managers, control) {
             newPw = err.username;
             btn.classList.remove('busy');
             $('#lh').textContent = `Welcome, ${String(err.name || '').split(' ')[0]}`;
-            $('#lp').textContent = 'Chetan made your account. Choose your password to finish.';
+            $('#lp').textContent = 'Your account is ready. Choose your password to finish.';
             $('#uwrap').hidden = true; $('#nwrap').hidden = false;
             $('#pwrap label').textContent = 'New password'; $('#pw').value = ''; $('#pw').focus();
             $('#go').textContent = 'Save password and sign in';
@@ -360,6 +360,11 @@ route(/^\/home$/, async () => {
   const open = mine.filter(d => d.status === 'open');
   const recent = mine.filter(d => d.status === 'closed').slice(0, 9);
   const today = mine.filter(d => fmt.dayKey(d.createdAt) === fmt.dayKey(Date.now()));
+  // A small dashboard of their own work. Weights only if they may see details.
+  const todayBoxes = today.reduce((t, d) => t + d.boxes.length, 0);
+  const todayKg = today.reduce((t, d) => t + (Number(d.totalWeight) || 0), 0);
+  const showKg = canSeeDetails(ME.user);
+  const week = Array.from({ length: 7 }, (_, i) => { const k = fmt.dayKey(Date.now() - (6 - i) * 86400000); return { n: mine.filter(d => fmt.dayKey(d.createdAt) === k).reduce((t, d) => t + d.boxes.length, 0) }; });
   const hour = new Date().getHours();
   const greet = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   render({
@@ -377,6 +382,12 @@ route(/^\/home$/, async () => {
  |_____________|/  |_____________|/</pre><div><h1>${greet}, ${esc(ME.user.name.split(' ')[0])}</h1>
         <p>${today.length ? `Today: ${today.length} list${today.length > 1 ? 's' : ''}, ${fmt.num(today.reduce((s, d) => s + d.boxes.length, 0))} boxes loaded.` : 'No lists yet today. Start one when the vehicle is at the dock.'}</p></div>
         <a class="btn primary lg" href="#/new">${icon('plus')} New loading list</a></section>
+      <div class="kpis">
+        <div class="kpi hero">${spark(week.map(x => x.n))}<span>My boxes today</span><b>${fmt.num(todayBoxes)}</b><small>${today.length} list${today.length === 1 ? '' : 's'} today</small></div>
+        ${showKg ? `<div class="kpi"><span>My weight today</span><b>${fmtW(todayKg)}</b><small>kg loaded</small></div>` : ''}
+        <div class="kpi"><span>Loading now</span><b>${open.length}</b><small>${open.length ? open.map(d => prettyVehicle(d.vehicleNo)).slice(0, 2).join(', ') : 'no open lists'}</small></div>
+        <div class="kpi"><span>This week</span><b>${fmt.num(week.reduce((t, x) => t + x.n, 0))}</b><small>boxes in 7 days</small></div>
+      </div>
       ${open.length ? `<h2 class="sec">Continue loading</h2><div class="lists">${open.map(listCard).join('')}</div>` : ''}
       <h2 class="sec">Recently closed</h2>
       ${recent.length ? `<div class="lists">${recent.map(listCard).join('')}</div>` : `<div class="panel empty"><b>Nothing closed yet</b>Closed lists appear here with their Excel, PDF and print options.</div>`}
@@ -385,7 +396,7 @@ route(/^\/home$/, async () => {
   });
 });
 
-window.addEventListener('offline', () => toast('Offline — scans will not save until the connection is back', 'bad', 5000));
+window.addEventListener('offline', () => toast(S.CLOUD ? 'Offline. Keep scanning; boxes are saved on this phone and sent when the connection is back.' : 'Offline', 'bad', 6000));
 window.addEventListener('online', () => toast('Back online'));
 
 function listCard(d) {
@@ -507,7 +518,7 @@ route(/^\/scan\/(\w+)$/, async id => {
   const d = await S.getDispatch(id);
   if (!d) return location.replace('#/');
   if (d.status !== 'open') return location.replace(`#/list/${id}`);
-  if (!isSuper(ME.user) && d.createdBy !== ME.user.id) { toast('Only the person loading this list (or Chetan) can scan into it', 'bad'); return location.replace(`#/list/${id}`); }
+  if (!isSuper(ME.user) && d.createdBy !== ME.user.id) { toast('Only the person loading this list (or the admin) can scan into it', 'bad'); return location.replace(`#/list/${id}`); }
   let cam = null;
 
   const tile = (b, isNew) => `<button class="lbl-tile${isNew ? ' new' : ''}" data-key="${esc(b.key)}" data-seq="${b.seq}">
@@ -584,7 +595,7 @@ route(/^\/scan\/(\w+)$/, async id => {
             beep('dup');
             if (chk.reason === 'same') {
               const prev = chk.prev;
-              say(`Already scanned — ${esc(rec.boxNo || rec.key)} is box #${prev.seq} on this list`, 'dup');
+              say(`Already scanned — <button type="button" class="boxlink" data-box="${esc(prev.key)}">${esc(rec.boxNo || rec.key)}</button> is box #${prev.seq} on this list`, 'dup');
               const t = $(`.lbl-tile[data-key="${CSS.escape(prev.key)}"]`);
               if (t) { t.classList.remove('hit'); void t.offsetWidth; t.classList.add('hit'); t.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
             } else {
@@ -599,7 +610,7 @@ route(/^\/scan\/(\w+)$/, async id => {
           bump($('#c-box'), d.boxes.length);
           bump($('#c-wt'), fmtW(d.totalWeight));
           $('#last').textContent = 'Last scan ' + fmt.time(box.scannedAt);
-          say(`Box #${box.seq} added — ${esc(box.boxNo || box.raw)}${box.item ? ' · ' + esc(box.item) : ''}`, 'ok');
+          say(`Box #${box.seq} added — <button type="button" class="boxlink" data-box="${esc(box.key)}">${esc(box.boxNo || box.raw)}</button>${box.weight != null ? ' · ' + fmtW(box.weight) + ' kg' : ''}${box.item ? ' · ' + esc(box.item) : ''}`, 'ok');
           const w = $('.scanfield .wrap'); w.classList.remove('zap'); void w.offsetWidth; w.classList.add('zap');
         }
       }
@@ -668,6 +679,11 @@ route(/^\/scan\/(\w+)$/, async id => {
       if (TOUCH) openCam();
       cleanup.push(() => cam?.stop());
 
+      // Tap a box number in the message line → the same details as tapping its tile.
+      $('#st').addEventListener('click', e => {
+        const k = e.target.closest('[data-box]')?.dataset.box;
+        if (k) $(`.lbl-tile[data-key="${CSS.escape(k)}"]`)?.click();
+      });
       $('#tray').onclick = e => {
         const t = e.target.closest('.lbl-tile'); if (!t) return;
         const b = d.boxes.find(x => x.key === t.dataset.key);
@@ -708,7 +724,7 @@ function boxDrawer(b, d, onRemove, onChange) {
   const keys = ['boxNo', 'packingSlip', 'boxIndex', 'item', 'qty', 'weight', 'datePacked', 'customer', 'shipTo', 'transporter', 'uid'];
   const rows = keys.filter(k => b[k] != null && b[k] !== '').map(k => `<dt>${FIELD_LABELS[k]}</dt><dd class="${['boxNo', 'uid', 'item'].includes(k) ? 'code' : ''}">${esc(k === 'weight' ? fmt.kg(b[k]) : b[k])}</dd>`).join('');
   const extra = Object.entries(b.extra || {}).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
-  // Chetan can fix any list. Employees can fix their own list while it is open.
+  // The admin can fix any list. Employees can fix their own list while it is open.
   const canEdit = isSuper(ME.user) || (d.status === 'open' && d.createdBy === ME.user.id);
   drawer({
     title: `Box #${b.seq}`,
@@ -824,7 +840,7 @@ function openPreview(d, s) {
   const el = document.createElement('div');
   el.className = 'preview'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
   el.innerHTML = `<div class="stage"><div class="sheet">${X.sheetHTML(d, s)}</div></div>
-    <aside class="tools"><h2>${d.limited ? 'Box list' : 'POL sheet'}</h2><p>${esc(d.code)}${d.limited ? '' : ' · ' + esc(prettyVehicle(d.vehicleNo))} · ${d.boxes.length} boxes</p>${d.limited ? `<p class="mute" style="font-size:13px">Box numbers only. Ask Chetan if you need weights and vehicle details.</p>` : ''}
+    <aside class="tools"><h2>${d.limited ? 'Box list' : 'POL sheet'}</h2><p>${esc(d.code)}${d.limited ? '' : ' · ' + esc(prettyVehicle(d.vehicleNo))} · ${d.boxes.length} boxes</p>${d.limited ? `<p class="mute" style="font-size:13px">Box numbers only. Ask the admin if you need weights and vehicle details.</p>` : ''}
       <button class="btn primary" data-p="print">${icon('print')} Print</button>
       <button class="btn" data-p="pdf">${icon('pdf')} Download PDF</button>
       <button class="btn" data-p="xlsx">${icon('xls')} Download Excel</button>
@@ -967,7 +983,7 @@ function live(fn) {
 
 const ACTIONS = {
   'auth.login': 'Signed in', 'auth.logout': 'Signed out', 'auth.password': 'Changed password',
-  'user.create': 'Added employee', 'user.update': 'Updated employee', 'user.enable': 'Enabled', 'user.disable': 'Disabled', 'user.delete': 'Deleted employee', 'user.reset': 'Reset password for',
+  'user.create': 'Added employee', 'user.update': 'Updated employee', 'user.enable': 'Enabled', 'user.disable': 'Disabled', 'user.delete': 'Deleted account', 'box.weight': 'Set weight of', 'user.reset': 'Reset password for',
   'list.create': 'Started list', 'list.close': 'Closed list', 'list.reopen': 'Reopened list', 'list.delete': 'Deleted list',
   'list.xlsx': 'Exported Excel', 'list.pdf': 'Exported PDF', 'list.print': 'Printed', 'list.share': 'Shared',
   'box.remove': 'Removed box', 'box.weight': 'Set weight of', 'settings.update': 'Changed settings', 'demo.seed': 'Loaded demo data', 'data.import': 'Restored backup', 'data.backup': 'Backed up to', 'report.xlsx': 'Exported report',
@@ -1036,7 +1052,7 @@ route(/^\/admin\/people(?:\?(\w+))?$/, async (qs) => {
   const stats = id => { const m = all.filter(d => d.createdBy === id); return { lists: m.length, boxes: m.reduce((s, d) => s + d.boxes.length, 0) }; };
   render({
     html: adminShell('#/admin/people', `<main class="page">
-      <div class="page-head"><div><h1>People</h1><p>${isSuper(ME.user) ? 'Add managers, employees and other workers. Only people added here can sign in.' : 'Everyone who can sign in. Only Chetan can add or change people.'}</p></div>
+      <div class="page-head"><div><h1>People</h1><p>${isSuper(ME.user) ? 'Add managers, employees and other workers. Only people added here can sign in.' : 'Everyone who can sign in. Only the admin can add or change people.'}</p></div>
         ${isSuper(ME.user) ? `<div class="actions"><button class="btn primary" id="add">${icon('plus')} Add person</button></div>` : ''}</div>
       <div class="panel"><div class="toolbar"><div class="search">${icon('search')}<input class="input" id="q" placeholder="Name, employee no., phone"></div></div>
       <div class="table-wrap"><table class="t"><thead><tr><th>Employee</th><th class="hide-sm">Phone</th><th class="hide-sm">Added</th><th class="hide-sm">Last sign-in</th><th class="num">Boxes</th><th>Status</th></tr></thead>
@@ -1073,7 +1089,7 @@ function personDrawer(p) {
   const today = fmt.isoDate(Date.now());
   drawer({
     title: isNew ? 'Add person' : esc(p.name),
-    body: `${ro ? '<div class="note-line" style="margin-bottom:16px">' + icon('lock') + ' View only. Ask Chetan to change anything here.</div>' : ''}<form id="pf" novalidate><fieldset ${ro ? 'disabled' : ''} style="border:0;margin:0;padding:0;min-width:0">
+    body: `${ro ? '<div class="note-line" style="margin-bottom:16px">' + icon('lock') + ' View only. Ask the admin to change anything here.</div>' : ''}<form id="pf" novalidate><fieldset ${ro ? 'disabled' : ''} style="border:0;margin:0;padding:0;min-width:0">
       <div class="fgroup"><h3>Personal</h3><div class="grid2">
         ${field({ name: 'name', label: 'Full name', value: p.name, span: true, attrs: 'autocomplete="off"' })}
         ${field({ name: 'dob', label: 'Date of birth', type: 'date', value: p.dob, attrs: `max="${today}"` })}
@@ -1089,7 +1105,7 @@ function personDrawer(p) {
         ${field({ name: 'designation', label: 'Designation', value: p.designation, attrs: 'list="desig"' })}
         <datalist id="desig"><option>Loader</option><option>Dispatch Supervisor</option><option>Store Assistant</option><option>Security</option><option>Contract Worker</option></datalist>
         ${field({ name: 'joinDate', label: 'Joining date', type: 'date', value: p.joinDate, opt: true, attrs: `max="${today}"` })}
-        ${field({ name: 'role', label: 'Access', value: p.role, options: p.role === 'super' ? [['super', 'Admin — Chetan']] : [['employee', 'Employee — scans and sees own lists'], ['manager', 'Manager — sees everything, changes nothing']], attrs: self || p.role === 'super' ? 'disabled' : '' })}
+        ${field({ name: 'role', label: 'Access', value: p.role, options: p.role === 'super' ? [['super', 'Admin']] : [['employee', 'Employee — scans and sees own lists'], ['manager', 'Manager — sees everything, changes nothing']], attrs: self || p.role === 'super' ? 'disabled' : '' })}
       </div></div>
       <div class="fgroup" id="permbox"><h3>What they can see</h3>
         <label class="check"><input type="checkbox" name="seeDetails" ${canSeeDetails(p) && p.role !== 'super' ? 'checked' : ''}><span><b>Full details in previews, PDFs and Excel</b><small>Weights, vehicle, transport, driver and driver photo. Without this they only get the box numbers.</small></span></label>
@@ -1111,7 +1127,7 @@ function personDrawer(p) {
         <div><span>Aadhaar</span>${fmt.aadhaar(p.aadhaar)}</div>
       </div></div>`}
     </fieldset></form>`,
-    foot: ro ? `<button class="btn" data-cancel>Close</button>` : `${!isNew && !self ? `<button class="btn ghost danger" data-toggle style="margin-right:auto">${icon('ban')} ${p.active ? 'Disable' : 'Enable'}</button>` : ''}
+    foot: ro ? `<button class="btn" data-cancel>Close</button>` : `${!isNew && !self && p.role !== 'super' ? `<button class="btn ghost danger" data-delete title="Delete account">${icon('trash')}</button><button class="btn ghost danger" data-toggle style="margin-right:auto">${icon('ban')} ${p.active ? 'Disable' : 'Enable'}</button>` : ''}
       <button class="btn ghost" data-cancel>Cancel</button><button class="btn primary" data-save>${isNew ? 'Add person' : 'Save changes'}</button>`,
     onMount(el, close) {
       const f = el.querySelector('#pf');
@@ -1169,6 +1185,11 @@ function personDrawer(p) {
         if (!(await confirmBox({ title: `Reset password for ${esc(p.name)}?`, text: `The new temporary password will be <b class="code">${pw}</b>. They must change it at next sign-in.`, ok: 'Reset password' }))) return;
         try { await S.resetPassword(p, pw, ME.user); } catch (err) { return toast(err.message, 'bad'); }
         await confirmBox({ title: 'Password reset', text: `Give ${esc(p.name)} this temporary password in person:<br><br><b class="code" style="font-size:20px">${pw}</b>`, ok: 'Done' });
+      });
+      el.querySelector('[data-delete]')?.addEventListener('click', async () => {
+        if (!(await confirmBox({ title: `Delete ${esc(p.name)}?`, text: 'The account is removed for good and they can no longer sign in. Their loading lists and activity stay. To pause someone instead, use Disable.', ok: 'Delete account', danger: true }))) return;
+        try { await S.deleteUser(p, ME.user); } catch (err) { return toast(err.message, 'bad'); }
+        close(); toast(`${p.name} deleted`); go();
       });
       el.querySelector('[data-toggle]')?.addEventListener('click', async () => {
         if (p.active && !(await confirmBox({ title: `Disable ${esc(p.name)}?`, text: 'They will not be able to sign in. Their lists stay.', ok: 'Disable', danger: true }))) return;
@@ -1255,7 +1276,7 @@ route(/^\/admin\/settings$/, async () => {
   const chips = (k) => s[k].map((t, i) => `<span class="chip">${esc(t)}<button data-rm="${k}:${i}" aria-label="Remove ${esc(t)}">${icon('x')}</button></span>`).join('');
   render({
     html: adminShell('#/admin/settings', `<main class="page">
-      <div class="page-head"><div><h1>Settings</h1><p>Printouts, drop-down lists, backups and the master PIN. Only Chetan sees this page.</p></div>
+      <div class="page-head"><div><h1>Settings</h1><p>Printouts, drop-down lists, backups and the master PIN. Only the admin sees this page.</p></div>
         <div class="actions"><a class="btn" href="#/admin/data">${icon('list')} View database</a><a class="btn" href="#/admin/activity">${icon('activity')} Activity log</a></div></div>
       <div class="settings-grid">
         <div class="panel"><div class="panel-head"><h2>Printout header</h2></div><form class="panel-body" id="hf" style="display:grid;gap:14px">
@@ -1354,7 +1375,7 @@ route(/^\/admin\/settings$/, async () => {
   });
 }, { super: true });
 // ======================================================================
-// Admin: the whole database, read-only, table by table (Chetan only)
+// Admin: the whole database, read-only, table by table (the admin only)
 // ======================================================================
 route(/^\/admin\/data$/, async () => {
   const all = await S.backup();

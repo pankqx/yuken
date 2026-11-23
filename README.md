@@ -19,7 +19,7 @@ A web app for Yuken India Limited's finished-goods dispatch dock. Employees scan
 
 ## Who can do what
 
-There is exactly one admin, Chetan, and it is built in: there is no setup screen and nobody can create another admin. He signs in on the hidden Control room (hold the Yuken logo for 2 seconds, or open `#/control`) with the admin password or his Google account, then adds managers and employees from **People → Add person**.
+There is exactly one admin account, and it is built in: there is no setup screen and nobody can create another admin. The admin signs in on the hidden Control room (hold the Yuken logo for 2 seconds, or open `#/control`) with the admin password or his Google account, then adds managers and employees from **People → Add person**.
 
 ## How it runs at the dock
 
@@ -64,12 +64,12 @@ vendor/                  three.js, SheetJS, jsPDF, html5-qrcode (bundled so the 
 
 ## Roles and sign-in
 
-- **Admin (Chetan)**: full control. He signs in with his password, or with Google once it is linked, and stays signed in until he presses Sign out.
-- **Managers (Mahesh, Sheela)**: view everything, change nothing. Their sign-in is on the "Manager or admin" tab.
+- **Admin**: full control. Signs in with his password, or with Google once it is linked, and stays signed in until he presses Sign out.
+- **Managers**: view everything, change nothing. Their sign-in is on the "Manager or admin" tab.
 - **Employees**: start lists and scan. They are signed out at the end of a shift.
 
 See **AGENTS.md** for the file map, the pages, how weights work and how to turn on Google sign-in and Google Drive backup.
 
 ## Online version
 
-Fill `FIREBASE` in `js/config.js` and publish `firestore.rules` in the Firebase console. Then every phone and laptop with the link shares the same accounts and loading lists, and only accounts Chetan creates can sign in. Details in **AGENTS.md → Online version**.
+Fill `FIREBASE` in `js/config.js` and publish `firestore.rules` in the Firebase console. Then every phone and laptop with the link shares the same accounts and loading lists, and only accounts the admin creates can sign in. Details in **AGENTS.md → Online version**.
