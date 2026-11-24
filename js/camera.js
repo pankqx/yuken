@@ -10,12 +10,17 @@ export function loadScript(src) {
   });
 }
 
-export async function startCamera(elId, onCode) {
+// opts.allCodes: also read plain barcodes. Off by default: a Yuken label has a
+// plain barcode (box number only) next to the QR code that holds the weight
+// and description, and the camera must read the QR code.
+export async function startCamera(elId, opts, onCode) {
+  if (typeof opts === 'function') { onCode = opts; opts = {}; }
+  let formats;
   await loadScript('vendor/html5-qrcode.min.js');
   const F = window.Html5QrcodeSupportedFormats;
   const cam = new window.Html5Qrcode(elId, {
     verbose: false,
-    formatsToSupport: [F.QR_CODE, F.CODE_128, F.CODE_39, F.CODE_93, F.EAN_13, F.EAN_8, F.ITF, F.DATA_MATRIX, F.PDF_417],
+    formatsToSupport: formats = opts.allCodes ? [F.QR_CODE, F.CODE_128, F.CODE_39, F.CODE_93, F.EAN_13, F.EAN_8, F.ITF, F.DATA_MATRIX, F.PDF_417] : [F.QR_CODE, F.DATA_MATRIX, F.PDF_417],
     experimentalFeatures: { useBarCodeDetectorIfSupported: true }
   });
   let last = '', lastAt = 0;
@@ -49,13 +54,13 @@ export async function startCamera(elId, onCode) {
       for (const zoom of [1, 1.6, 2.4]) {
         const c = shot(zoom);
         if ('BarcodeDetector' in window) {
-          try { const r = await new window.BarcodeDetector().detect(c); if (r[0]?.rawValue) return r[0].rawValue; } catch { /* try the other reader */ }
+          try { const r = await new window.BarcodeDetector(opts.allCodes ? undefined : { formats: ['qr_code', 'data_matrix', 'pdf417'] }).detect(c); if (r[0]?.rawValue) return r[0].rawValue; } catch { /* try the other reader */ }
         }
         try {
           let host = document.getElementById('cap-reader');
           if (!host) { host = document.createElement('div'); host.id = 'cap-reader'; host.hidden = true; document.body.append(host); }
           const blob = await new Promise(r => c.toBlob(r, 'image/png'));
-          const text = await new window.Html5Qrcode('cap-reader', { verbose: false }).scanFile(new File([blob], 'shot.png', { type: 'image/png' }), false);
+          const text = await new window.Html5Qrcode('cap-reader', { verbose: false, formatsToSupport: formats }).scanFile(new File([blob], 'shot.png', { type: 'image/png' }), false);
           if (text) return text;
         } catch { /* nothing found at this zoom */ }
       }

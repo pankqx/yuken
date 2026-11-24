@@ -597,6 +597,16 @@ route(/^\/scan\/(\w+)$/, async id => {
           let chk;
           try { chk = await withTimeout(S.addBox(d, rec, SETTINGS, ME.user, via), 12000); }
           catch (err) { beep('bad'); say(`Not saved — ${esc(err.message)} Scan the box again.`, 'bad'); return; }
+          if (!chk.ok && chk.reason === 'filled') {
+            // Same box, scanned again from its QR code: its missing details were filled in.
+            const prev = chk.prev;
+            beep('ok');
+            const t = $(`.lbl-tile[data-key="${CSS.escape(prev.key)}"]`);
+            if (t) t.outerHTML = tile(prev, true);
+            bump($('#c-wt'), fmtW(d.totalWeight));
+            say(`Box #${prev.seq} updated — <button type="button" class="boxlink" data-box="${esc(prev.key)}">${esc(prev.boxNo || prev.key)}</button>${prev.weight != null ? ' · ' + fmtW(prev.weight) + ' kg' : ''}${prev.item ? ' · ' + esc(prev.item) : ''}`, 'ok');
+            return;
+          }
           if (!chk.ok) {
             beep('dup');
             if (chk.reason === 'same') {
@@ -616,7 +626,8 @@ route(/^\/scan\/(\w+)$/, async id => {
           bump($('#c-box'), d.boxes.length);
           bump($('#c-wt'), fmtW(d.totalWeight));
           $('#last').textContent = 'Last scan ' + fmt.time(box.scannedAt);
-          say(`Box #${box.seq} added — <button type="button" class="boxlink" data-box="${esc(box.key)}">${esc(box.boxNo || box.raw)}</button>${box.weight != null ? ' · ' + fmtW(box.weight) + ' kg' : ''}${box.item ? ' · ' + esc(box.item) : ''}`, 'ok');
+          if (box.weight == null) say(`Box #${box.seq} added — <button type="button" class="boxlink" data-box="${esc(box.key)}">${esc(box.boxNo || box.raw)}</button>, but <b>no weight or description</b> was read. Scan the box's <b>QR code</b> to fill them in, or tap the box number to type the weight.`, 'dup');
+          else say(`Box #${box.seq} added — <button type="button" class="boxlink" data-box="${esc(box.key)}">${esc(box.boxNo || box.raw)}</button> · ${fmtW(box.weight)} kg${box.item ? ' · ' + esc(box.item) : ''}`, 'ok');
           const w = $('.scanfield .wrap'); w.classList.remove('zap'); void w.offsetWidth; w.classList.add('zap');
         }
       }
@@ -662,7 +673,7 @@ route(/^\/scan\/(\w+)$/, async id => {
           <button type="button" class="btn primary capture" id="capBtn">${icon('camera')} Capture</button></div>`;
         $('#camBtn').innerHTML = `${icon('x')}<span>Stop</span>`;
         try {
-          cam = await startCamera('reader', code => {
+          cam = await startCamera('reader', { allCodes: !!SETTINGS.cameraAllCodes }, code => {
             const box = $('#cam .camera'); box?.classList.remove('hit'); void box?.offsetWidth; box?.classList.add('hit');
             add(code, 'camera');
           });
@@ -1293,6 +1304,7 @@ route(/^\/admin\/settings$/, async () => {
         <div class="panel"><div class="panel-head"><h2>Rules</h2></div><div class="panel-body">
           <label class="check"><input type="checkbox" id="rp" ${s.requirePhotoBeforeScan ? 'checked' : ''}><div><b>Driver photo before scanning</b><span>Scanning stays locked until the photo is taken.</span></div></label>
           <label class="check"><input type="checkbox" id="cx" ${s.blockCrossListDuplicates ? 'checked' : ''}><div><b>Block boxes already on another list</b><span>Stops one box being loaded on two vehicles.</span></div></label>
+          <label class="check"><input type="checkbox" id="cac" ${s.cameraAllCodes ? 'checked' : ''}><div><b>Phone camera also reads plain barcodes</b><span>Off: the camera reads only QR codes, which carry the weight and description. Turn on only if your labels have no QR code.</span></div></label>
         </div></div>
         <div class="panel"><div class="panel-head"><h2>Transporters</h2></div><div class="panel-body">
           <div class="chips">${chips('transporters')}</div>
@@ -1319,6 +1331,7 @@ route(/^\/admin\/settings$/, async () => {
       $('#hf').onsubmit = async e => { e.preventDefault(); const v = formData(e.target); if (!setErrors(e.target, { company: validate.required(v.company), docTitle: validate.required(v.docTitle) })) return; await save(v); toast('Header saved'); };
       $('#rp').onchange = e => save({ requirePhotoBeforeScan: e.target.checked }).then(() => toast('Saved'));
       $('#cx').onchange = e => save({ blockCrossListDuplicates: e.target.checked }).then(() => toast('Saved'));
+      $('#cac').onchange = e => save({ cameraAllCodes: e.target.checked }).then(() => toast('Saved'));
       $$('[data-add]').forEach(f => f.onsubmit = async e => {
         e.preventDefault(); const k = f.dataset.add; const v = f.querySelector('input').value.trim();
         if (!v) return; if (s[k].some(x => x.toLowerCase() === v.toLowerCase())) return toast('Already in the list', 'bad');

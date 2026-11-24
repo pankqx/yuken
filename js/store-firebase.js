@@ -19,7 +19,7 @@
 // hidden email (N+1); they then choose a new password.
 import { auth, fdb, F } from './fb.js';
 import { ADMIN } from './config.js';
-import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, boxIds, totals, renumber, clean, dayKey, listCode } from './common.js';
+import { fillMissing, DEFAULT_SETTINGS, SHIFT_MS, sameBox, boxIds, totals, renumber, clean, dayKey, listCode } from './common.js';
 
 export const CLOUD = true;
 export const authEmail = () => auth.currentUser?.email || '';
@@ -472,7 +472,16 @@ async function sha1(text) {
 
 export async function addBox(d, rec, settings, user, via) {
   const prev = d.boxes.find(b => sameBox(b, rec));
-  if (prev) return { ok: false, reason: 'same', prev };
+  if (prev) {
+    const added = fillMissing(prev, rec);
+    if (added.length) {
+      totals(d);
+      bg(F.updateDoc(D('dispatches', d.id), { boxes: clean(d.boxes), updatedAt: now() }), `Updating box ${prev.boxNo || ''}`);
+      for (const k of await Promise.all(boxIds(rec).map(sha1))) bg(F.setDoc(D('boxIndex', k), { list: d.id, code: d.code, vehicleNo: d.vehicleNo || '', at: now() }), 'Saving the box index');
+      return { ok: false, reason: 'filled', prev, added };
+    }
+    return { ok: false, reason: 'same', prev };
+  }
   const keys = await Promise.all(boxIds(rec).map(sha1));
   if (settings.blockCrossListDuplicates) {
     for (const k of keys) {

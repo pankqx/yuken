@@ -4,7 +4,7 @@ import { MASTER_PIN } from './config.js';
 import { hashPassword } from './util.js';
 import { parseScan } from './parse.js';
 import { ADMIN } from './config.js';
-import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, totals, renumber, demoLists, DEMO_PEOPLE, DEMO_PASSWORD, dayKey, listCode } from './common.js';
+import { fillMissing, DEFAULT_SETTINGS, SHIFT_MS, sameBox, totals, renumber, demoLists, DEMO_PEOPLE, DEMO_PASSWORD, dayKey, listCode } from './common.js';
 
 const SESSION_KEY = 'yk.session';
 
@@ -283,7 +283,11 @@ export async function addBox(d, rec, settings, user, via) {
   const fresh = await db.get('dispatches', d.id);
   Object.assign(d, fresh);
   const prev = d.boxes.find(b => sameBox(b, rec));
-  if (prev) return { ok: false, reason: 'same', prev };
+  if (prev) {
+    const added = fillMissing(prev, rec);
+    if (added.length) { await save(d); return { ok: false, reason: 'filled', prev, added }; }
+    return { ok: false, reason: 'same', prev };
+  }
   if (settings.blockCrossListDuplicates) {
     const other = (await db.all('dispatches')).find(x => x.id !== d.id && x.boxes.some(b => sameBox(b, rec)));
     if (other) return { ok: false, reason: 'other', other };

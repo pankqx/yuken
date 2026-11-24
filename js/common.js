@@ -8,7 +8,8 @@ export const DEFAULT_SETTINGS = {
   transporters: ['Collection – Personal collection', 'VRL Logistics', 'Safexpress', 'Gati', 'TCI Express', 'Blue Dart', 'Delhivery'],
   locations: ['FG Store – Dock 1', 'FG Store – Dock 2', 'Export Bay', 'Plant 2 Dispatch'],
   requirePhotoBeforeScan: true,
-  blockCrossListDuplicates: true
+  blockCrossListDuplicates: true,
+  cameraAllCodes: false
 };
 
 export const SHIFT_MS = 14 * 3600 * 1000;
@@ -97,3 +98,17 @@ export async function demoLists(people, settings) {
 
 export const dayKey = ts => { const d = new Date(ts); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
 export const listCode = (ts, seq) => `POL-${dayKey(ts)}-${String(seq).padStart(3, '0')}`;
+
+// A box first saved from its plain barcode (box number only) can be completed
+// by scanning its QR code: copy the details the saved box is missing.
+// Returns the field names that were filled in (empty = nothing new).
+const DETAIL_FIELDS = ['weight', 'item', 'qty', 'uid', 'datePacked', 'customer', 'shipTo', 'transporter', 'packingSlip', 'boxIndex'];
+export function fillMissing(prev, rec) {
+  const added = [];
+  for (const f of DETAIL_FIELDS) {
+    if ((prev[f] == null || prev[f] === '') && rec[f] != null && rec[f] !== '') { prev[f] = rec[f]; added.push(f); }
+  }
+  if (rec.extra) for (const [k, v] of Object.entries(rec.extra)) if (!(prev.extra || {})[k]) { (prev.extra ||= {})[k] = v; added.push(k); }
+  if (added.length && rec.raw && rec.raw.length > (prev.raw || '').length) prev.raw = rec.raw;
+  return added;
+}

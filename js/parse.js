@@ -7,18 +7,18 @@ import { weightNumber } from './common.js';
 const FIELDS = [
   ['boxNo',       /^(ps\s*)?box\s*(num(ber)?|no\.?)?$|^packing\s*slip|^ps\s*no|^box$/i],
   ['uid',         /unique|^uid|serial\s*no|ids?\s*packed/i],
-  ['weight',      /weight|\bwt\b|^kgs?$|gross|net\s*wt/i],
-  ['datePacked',  /date|packed/i],
+  ['weight',      /weight|\bwt\b|^wt\.?|^kgs?$|gross|net\s*wt|^n\.?\s*w\.?$|^g\.?\s*w\.?$|\(kg\)/i],
+  ['datePacked',  /date|^packed\s*on|^packed$/i],
   ['customer',    /^customer|^cust/i],
   ['shipTo',      /ship\s*-?\s*to|consignee|deliver/i],
   ['transporter', /transport|carrier/i],
-  ['item',        /item|part|desc|model|material/i],
-  ['qty',         /^qty|quantity|pcs/i]
+  ['qty',         /^qty|quantity|pcs|\bqty\b/i],
+  ['item',        /item|part|desc|model|material|package|product|article/i]
 ];
 
 export const FIELD_LABELS = {
   boxNo: 'Box no.', packingSlip: 'Packing slip', boxIndex: 'Box', weight: 'Weight', datePacked: 'Packed on',
-  customer: 'Customer', shipTo: 'Ship to', transporter: 'Transporter', item: 'Item', qty: 'Qty', uid: 'Unique ID'
+  customer: 'Customer', shipTo: 'Ship to', transporter: 'Transporter', item: 'Description', qty: 'Qty', uid: 'Unique ID'
 };
 
 function keyFor(label) {
@@ -77,7 +77,7 @@ export function parseScan(input) {
 
   // Key: value payload. Labels typed on one line ("PS Box Num: 1-3 Box Weight: 28.7 …")
   // are split in front of each known field name.
-  const LABELS = /(?=\b(?:PS\s*Box\s*Num|Box\s*No|(?:Box|Gross|Net)\s*(?:Weight|Wt)|(?<!(?:Box|Gross|Net)\s*)Weight|Date\s*Packed|Customer|Ship[\s-]*To|Transporter|Item\s*Description|Item|Qty|Unique\s*IDs?(?:\s*packed)?)\s*[:=])/i;
+  const LABELS = /(?=\b(?:PS\s*Box\s*Num|Box\s*No|(?:Box|Gross|Net)\s*(?:Weight|Wt)|(?<!(?:Box|Gross|Net)\s*)Weight|Net\s*Wt|Gross\s*Wt|Date\s*Packed|Customer|Ship[\s-]*To|Transporter|(?:Item|Package|Product|Part)\s*(?:Description|Desc|No)|(?<!(?:Item|Package|Product|Part)\s*)Description|(?<!(?:Package|Product)\s*)Item(?!\s*(?:Description|Desc|No))|Qty|Quantity|Unique\s*IDs?(?:\s*packed)?)\s*[:=])/i;
   let text = raw;
   if (!/[\n|;\t]/.test(raw) && (raw.match(/[:=]/g) || []).length >= 2) text = raw.split(LABELS).join('\n');
   const parts = text.split(/\n|\||;|\t/).map(s => s.trim()).filter(Boolean);
@@ -89,7 +89,7 @@ export function parseScan(input) {
       const k = keyFor(p.slice(0, i));
       const v = p.slice(i + 1).trim();
       if (k && v && rec[k] == null) rec[k] = v;
-      else if (!k) (rec.extra ||= {})[p.slice(0, i).trim()] = v;
+      else if (v) (rec.extra ||= {})[p.slice(0, i).trim()] = v;   // unknown field, or a second weight (gross after net)
     }
     if (!rec.boxNo && !rec.uid) rec.boxNo = parts[0];
     return finish(rec, raw);
