@@ -10,11 +10,21 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
-    function isSuper() {
+    // Admin = one of these Gmails, verified by Google. After the first Google
+    // sign-in the admin also has a members record with role 'super', so signing
+    // in with the admin password works too.
+    function verifiedAdmin() {
       return signedIn()
         && request.auth.token.email in ['chethu6424@gmail.com', 'pankqx@gmail.com', 'pankwq@gmail.com']
         && request.auth.token.email_verified == true;
     }
+    function adminMember() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/members/$(request.auth.uid)).data.role == 'super'
+        && get(/databases/$(database)/documents/members/$(request.auth.uid)).data.active == true;
+    }
+    function isSuper() { return verifiedAdmin() || adminMember(); }
     function memberDoc() { return get(/databases/$(database)/documents/members/$(request.auth.uid)); }
     function isMember() {
       return isSuper() || (signedIn()
@@ -50,7 +60,7 @@ service cloud.firestore {
     // role the admin gave them.
     match /members/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isStaff());
-      allow create: if isSuper() || (
+      allow create: if verifiedAdmin() || (isSuper() && request.resource.data.role != 'super') || (
         signedIn() && request.auth.uid == uid
         && request.resource.data.keys().hasOnly(['username', 'role', 'active'])
         && request.resource.data.active == true
@@ -59,7 +69,9 @@ service cloud.firestore {
         && loginOf(request.resource.data.username).role == request.resource.data.role
         && loginOf(request.resource.data.username).needsPassword == true
         && loginOf(request.resource.data.username).active == true);
-      allow update, delete: if isSuper();
+      // Only a Google-verified admin can give anyone the admin role.
+      allow update: if isSuper() && (request.resource.data.role != 'super' || verifiedAdmin());
+      allow delete: if isSuper();
     }
 
     // Full profiles (phone, address, Aadhaar). Staff see everyone; a person sees themself.

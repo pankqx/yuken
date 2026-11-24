@@ -70,7 +70,9 @@ async function route_() {
       const denied = S.CLOUD && /insufficient permissions|permission/i.test(err.message || '');
       const who = S.CLOUD ? S.authEmail?.() : '';
       const help = denied ? `<p class="mute" style="max-width:520px;margin:12px auto 0">Signed in as <b>${esc(who || 'unknown')}</b>. The online database did not allow this account to read this page.${isSuper(ME?.user) ? ' Publish the latest <b>firestore.rules</b> in Firebase console → Firestore Database → Rules, and check this Gmail is in its admin list.' : ' Ask the admin to check your account.'}</p>` : '';
-      return render(frame('', `<main class="page"><div class="panel empty"><b>Could not open this page</b>${esc(err.message || err)}${help}<br><a class="btn" href="#/">Go to start</a></div></main>`));
+      render(frame('', `<main class="page"><div class="panel empty"><b>Could not open this page</b>${esc(err.message || err)}${help}${denied ? '<pre class="diag" id="diag">Checking…</pre>' : ''}<br><a class="btn" href="#/">Go to start</a></div></main>`));
+      if (denied && S.diagnose) S.diagnose().then(lines => { const el = $('#diag'); if (el) el.textContent = lines.join('\n'); }).catch(() => {});
+      return;
     }
   }
   location.replace(isAdmin(ME.user) ? '#/admin' : '#/home');

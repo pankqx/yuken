@@ -23,6 +23,25 @@ import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, boxIds, totals, renumber, clean, d
 
 export const CLOUD = true;
 export const authEmail = () => auth.currentUser?.email || '';
+
+// Self-check for the error page: which reads the online database allows.
+export async function diagnose() {
+  const cu = auth.currentUser;
+  const tests = [
+    ['Settings', () => F.getDoc(D('settings', 'app'))],
+    ['My sign-in record', () => F.getDoc(D('members', cu.uid))],
+    ['Admin profile', () => F.getDoc(D('people', ADMIN_ID))],
+    ['People list', () => F.getDocs(F.query(C('people'), F.limit(1)))],
+    ['Loading lists', () => F.getDocs(F.query(C('dispatches'), F.orderBy('createdAt', 'desc'), F.limit(1)))],
+    ['Activity log', () => F.getDocs(F.query(C('audit'), F.orderBy('at', 'desc'), F.limit(1)))]
+  ];
+  const out = [`Account: ${cu?.email || 'none'} · verified: ${cu?.emailVerified ? 'yes' : 'no'} · signed in with: ${cu?.providerData.map(p => p.providerId).join(', ') || '?'}`];
+  for (const [name, fn] of tests) {
+    try { const r = await fn(); out.push(`✓ ${name}${r.exists ? (r.exists() ? '' : ' (empty)') : ''}`); }
+    catch (e) { out.push(`✗ ${name}: ${e.code || e.message}`); }
+  }
+  return out;
+}
 const SESSION_KEY = 'yk.cloud.session';
 const MAIL = 'yuken-pol.app';
 const ADMIN_ID = 'admin';
