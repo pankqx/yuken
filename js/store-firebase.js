@@ -22,6 +22,7 @@ import { ADMIN } from './config.js';
 import { DEFAULT_SETTINGS, SHIFT_MS, sameBox, boxIds, totals, renumber, clean, dayKey, listCode } from './common.js';
 
 export const CLOUD = true;
+export const authEmail = () => auth.currentUser?.email || '';
 const SESSION_KEY = 'yk.cloud.session';
 const MAIL = 'yuken-pol.app';
 const ADMIN_ID = 'admin';
